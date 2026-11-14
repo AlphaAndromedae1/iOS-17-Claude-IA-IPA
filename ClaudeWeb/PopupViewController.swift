@@ -73,7 +73,7 @@ extension PopupViewController: WKNavigationDelegate {
             UIApplication.shared.open(url)
             return
         }
-        decisionHandler(.allow)
+        decisionHandler(.allowWithoutTryingAppLink)
     }
 
     func webView(
@@ -151,6 +151,14 @@ extension PopupViewController: WKUIDelegate {
     ) {
         JavaScriptPanels.prompt(prompt, defaultText: defaultText, from: self, completion: completionHandler)
     }
+}
+
+extension WKNavigationActionPolicy {
+    /// Like `.allow`, but WebKit won't hand the URL to an app that claims it as a universal link.
+    /// Without it, a claude.ai link or sign-in redirect can jump to the official Claude app, if
+    /// an old copy is installed, instead of staying here. WebKit's private
+    /// `_WKNavigationActionPolicyAllowWithoutTryingAppLink`; Firefox for iOS relies on it too.
+    static let allowWithoutTryingAppLink = WKNavigationActionPolicy(rawValue: WKNavigationActionPolicy.allow.rawValue + 2) ?? .allow
 }
 
 extension WKNavigationResponse {

@@ -150,8 +150,8 @@ final class WebViewController: UIViewController {
         if error.domain == NSURLErrorDomain && error.code == NSURLErrorCancelled { return }
         // 102: the load became a download or was cancelled by policy. 204: handled by a plug-in.
         if error.domain == "WebKitErrorDomain" && (error.code == 102 || error.code == 204) { return }
-        // A failure after the page is already up (a late sub-resource, say) isn't worth a full-screen error.
-        if pageWasShowing && webView.url != nil { return }
+        // A failure after the page is already up isn't worth hiding it behind a full-screen error.
+        if pageWasShowing { return }
 
         failedURL = error.userInfo[NSURLErrorFailingURLErrorKey] as? URL ?? webView.url
         showError(title: "Couldn't load Claude", message: error.localizedDescription)
@@ -375,7 +375,8 @@ extension WebViewController: WKNavigationDelegate {
         )
         switch destination {
         case .webView:
-            decisionHandler(.allow)
+            let staysInApp = LinkRouter.isAppHost(url.host) || LinkRouter.isFlowHost(url.host)
+            decisionHandler(staysInApp ? .allowWithoutTryingAppLink : .allow)
         case .safariSheet:
             decisionHandler(.cancel)
             openInSafariSheet(url)
@@ -422,7 +423,8 @@ extension WebViewController: WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
         endProgress()
-        handleLoadError(error, pageWasShowing: true)
+        // The spinner is still up only if nothing has been shown yet.
+        handleLoadError(error, pageWasShowing: !spinner.isAnimating)
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {

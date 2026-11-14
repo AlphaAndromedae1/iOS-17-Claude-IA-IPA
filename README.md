@@ -63,7 +63,9 @@ can do this automatically). A paid developer account makes that one year.
   - type the code from the email into the app if the email has one, or
   - press and hold the sign-in link in Mail → **Copy Link**, open the app, shake, and choose **Open Copied Link**.
 
-  Just tapping the link opens it in Safari, which signs Safari in, not this app.
+  Just tapping the link opens it in Safari, which signs Safari in, not this app. If the old official
+  Claude app is still installed, tapping the link may open that app instead. You can delete it,
+  since it can no longer sign in.
 - **Google / Apple**: the app identifies itself as Mobile Safari and opens these sign-in windows in a sheet,
   so they should work. Google sometimes still refuses sign-in from apps that embed web pages. If it does,
   use email with the same address as your Google account; it signs you in to the same Claude account.
