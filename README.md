@@ -72,7 +72,12 @@ can do this automatically). A paid developer account makes that one year.
 
 ## Building it yourself
 
-GitHub Actions builds the IPA on every push (see `.github/workflows/build-ipa.yml`). To publish a release:
+GitHub Actions builds the IPA on every push (see `.github/workflows/build-ipa.yml`). To publish a
+release, either:
+
+- on github.com: **Releases → Draft a new release**, type a new tag such as `v1.0.0`, pick the branch
+  with the code as the target and click **Publish release**, or
+- from a clone: push a tag.
 
 ```bash
 git tag v1.0.0
@@ -81,6 +86,8 @@ git tag v1.0.0
 ```bash
 git push origin v1.0.0
 ```
+
+Either way, the workflow builds the app and attaches `ClaudeWeb.ipa` to the release a few minutes later.
 
 On a Mac with Xcode 15 or later:
 
