@@ -16,7 +16,9 @@ final class PopupViewController: UIViewController {
         webView.navigationDelegate = self
         webView.uiDelegate = self
         webView.allowsBackForwardNavigationGestures = true
+        #if DEBUG
         webView.isInspectable = true
+        #endif
     }
 
     required init?(coder: NSCoder) {

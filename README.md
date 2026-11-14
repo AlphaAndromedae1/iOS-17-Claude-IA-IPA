@@ -118,8 +118,9 @@ To change the home-screen name, edit `CFBundleDisplayName` in `Supporting/Info.p
 
 ### Debugging
 
-The web view is inspectable. Connect the iPhone to a Mac, enable Settings → Safari → Advanced → Web Inspector,
-then in Safari on the Mac choose Develop → *your iPhone* → claude.ai.
+Debug builds run from Xcode can be inspected; the release IPA built by GitHub Actions can't. To inspect a
+debug build, connect the iPhone to a Mac and enable Settings → Safari → Advanced → Web Inspector. Then, in
+Safari on the Mac, choose Develop → *your iPhone* → claude.ai.
 
 ## Limitations
 

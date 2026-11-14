@@ -75,10 +75,14 @@ enum PageScripts {
       }
       window.addEventListener("resize", schedule);
       window.addEventListener("pageshow", schedule);
+      window.addEventListener("popstate", schedule);
       document.addEventListener("visibilitychange", schedule);
-      // In-app navigation does not reload the document, so look again now and then.
-      setInterval(schedule, 2000);
-      schedule();
+      // Moving around the app (opening a chat, the sidebar, settings) follows a tap and doesn't
+      // reload the document, so look again shortly after each tap rather than polling on a timer.
+      document.addEventListener("click", function () { setTimeout(schedule, 400); },
+                                { capture: true, passive: true });
+      // The app paints in stages after the document itself has loaded.
+      [0, 600, 1500, 4000].forEach(function (ms) { setTimeout(schedule, ms); });
     })();
     """#
 }

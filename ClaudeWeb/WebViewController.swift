@@ -13,6 +13,8 @@ final class WebViewController: UIViewController {
     private static let homeURL = URL(string: "https://claude.ai/")!
     private static let newChatURL = URL(string: "https://claude.ai/new")!
     private static let lastPageKey = "LastPageURL"
+    private static let downloadsFolder = FileManager.default.temporaryDirectory
+        .appendingPathComponent("Downloads", isDirectory: true)
 
     /// iOS stops the web content process when memory runs low, most often while the app
     /// is in the background. The page is reloaded quietly, unless it keeps happening.
@@ -90,6 +92,9 @@ final class WebViewController: UIViewController {
         center.addObserver(self, selector: #selector(appWillEnterForeground),
                            name: UIApplication.willEnterForegroundNotification, object: nil)
 
+        // Downloads are only kept until they've been shared; drop any left over from last time.
+        try? FileManager.default.removeItem(at: Self.downloadsFolder)
+
         spinner.startAnimating()
         load(restoredPage() ?? Self.homeURL)
     }
@@ -118,8 +123,11 @@ final class WebViewController: UIViewController {
         webView.backgroundColor = .clear
         webView.scrollView.backgroundColor = .clear
         webView.scrollView.contentInsetAdjustmentBehavior = .never
-        // Lets Safari's Web Inspector on a Mac attach to the page for debugging.
+        #if DEBUG
+        // Lets Safari's Web Inspector on a Mac attach to the page. Debug builds from Xcode only;
+        // the release IPA can't be inspected.
         webView.isInspectable = true
+        #endif
         return webView
     }
 
@@ -253,6 +261,10 @@ final class WebViewController: UIViewController {
     private func share(_ file: URL) {
         let presenter = topmostPresented
         let sheet = UIActivityViewController(activityItems: [file], applicationActivities: nil)
+        // Whatever was chosen (Save to Files, AirDrop, ...) has its own copy by now.
+        sheet.completionWithItemsHandler = { _, _, _, _ in
+            try? FileManager.default.removeItem(at: file)
+        }
         if let popover = sheet.popoverPresentationController {
             popover.sourceView = presenter.view
             popover.sourceRect = CGRect(x: presenter.view.bounds.midX, y: presenter.view.bounds.midY, width: 0, height: 0)
@@ -544,7 +556,7 @@ extension WebViewController: WKDownloadDelegate {
         suggestedFilename: String,
         completionHandler: @escaping (URL?) -> Void
     ) {
-        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("Downloads", isDirectory: true)
+        let folder = Self.downloadsFolder
         do {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         } catch {
