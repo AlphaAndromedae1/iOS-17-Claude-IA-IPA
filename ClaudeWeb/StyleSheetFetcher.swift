@@ -71,19 +71,28 @@ final class StyleSheetFetcher: NSObject, WKScriptMessageHandlerWithReply {
         if let fixed = body["fixed"] as? String {
             let name = URL(string: fixed)?.lastPathComponent ?? fixed
             let count = (body["count"] as? NSNumber)?.intValue ?? 0
+            let hasCount = (body["hasCount"] as? NSNumber)?.intValue ?? 0
             let how = body["how"] as? String == "constructed"
                 ? "\nAdded as a constructed style sheet, because the page's Content Security Policy refused a <style>."
                 : ""
             let file = "\nFile: \(fixed.components(separatedBy: "?")[0])"
             loadedSheets += 1
-            if count > 0 {
+            if count + hasCount > 0 {
                 if !fixedSheets.contains(name) && fixedSheets.count < 50 {
                     fixedSheets.append(name)
                 }
+                var changes: [String] = []
+                if count > 0 {
+                    changes.append("replaced \(count) relative colour expression\(count == 1 ? "" : "s")")
+                }
+                if hasCount > 0 {
+                    changes.append("disabled \(hasCount) :has() selector\(hasCount == 1 ? "" : "s") that test an attribute")
+                }
+                let summary = changes.joined(separator: " and ")
+                let sentence = summary.prefix(1).uppercased() + String(summary.dropFirst())
                 DebugLog.shared.info(
                     "Style fix", "Fixed \(name) for iOS 17",
-                    details: "Replaced \(count) relative colour expression\(count == 1 ? "" : "s") that crash "
-                        + "WebKit on iOS 17.3." + how + file
+                    details: sentence + ", which crash WebKit on iOS 17.3." + how + file
                 )
             } else {
                 DebugLog.shared.info(

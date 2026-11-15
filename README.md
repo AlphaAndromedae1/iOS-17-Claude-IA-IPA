@@ -39,6 +39,12 @@ The corrected CSS is then added to the page right where the original `<link>` wa
 relative colours are added unchanged. Settings → Debug Log lists every file that went through the
 fix, and whether anything was changed.
 
+A second iOS 17.3 crash comes from CSS `:has()` selectors that test an attribute, such as
+`:has([data-state=open])`, which Tailwind generates for its `has-[…]` styles. When the page changes,
+WebKit re-checks those selectors and crashes (in `HTMLDocument::isCaseSensitiveAttribute`). The fix
+disables just those selectors, so WebKit skips them as a browser without `:has()` would. Other
+`:has()` selectors still work. A few small visual touches that depend on them may be missing.
+
 (Version 1.3.0 tried to swap the files from a script while WebKit was still downloading them. WebKit
 reads a style sheet as soon as its download finishes, and that happened first, so it still crashed.
 Blocking the download avoids that race.)

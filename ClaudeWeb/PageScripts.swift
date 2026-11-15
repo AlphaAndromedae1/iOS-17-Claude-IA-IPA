@@ -224,6 +224,10 @@ enum PageScripts {
     /// while parsing that (in `RenderThemeIOS::systemColor`), taking the page down every time it
     /// loads; Safari crashes the same way.
     ///
+    /// A second iOS 17.3 crash comes from `:has()` selectors that test an attribute, such as
+    /// `:has([data-state=open])`: WebKit crashes re-checking them after the page changes (in
+    /// `HTMLDocument::isCaseSensitiveAttribute`). Those selectors are disabled too.
+    ///
     /// `StyleFixRules` stops WebKit from loading style sheets from Claude's own servers, so it never
     /// parses the originals. This script loads each of those sheets itself, renames every relative
     /// colour to an unknown function, which WebKit treats as unsupported, and adds the result to the
@@ -302,10 +306,46 @@ enum PageScripts {
         try { return new URL(path, base).href; } catch (e) { return path; }
       }
 
+      // Second iOS 17.3 crash: after the page changes, WebKit re-checks :has() selectors, and crashes
+      // (in HTMLDocument::isCaseSensitiveAttribute) on ones that test an attribute, such as
+      // :has([data-state=open]). Rename just those so WebKit drops them, as a browser without :has()
+      // would; other :has() selectors are left alone.
+      function disableAttributeHas(css) {
+        var lower = css.toLowerCase();
+        var out = "", from = 0, count = 0;
+        for (;;) {
+          var at = lower.indexOf(":has(", from);
+          if (at < 0) break;
+          var depth = 0, quote = "", end = -1;
+          for (var i = at + 4; i < css.length; i++) {
+            var ch = css.charAt(i);
+            if (quote) {
+              if (ch === "\\") i++;
+              else if (ch === quote) quote = "";
+            } else if (ch === "\"" || ch === "'") {
+              quote = ch;
+            } else if (ch === "(") {
+              depth++;
+            } else if (ch === ")" && --depth === 0) {
+              end = i;
+              break;
+            }
+          }
+          if (end < 0) break;  // unbalanced: leave the rest as it is
+          var testsAttribute = css.slice(at + 5, end).indexOf("[") >= 0;
+          out += css.slice(from, at) + (testsAttribute ? ":-claude-web-unsupported-has(" : css.slice(at, at + 5));
+          if (testsAttribute) count++;
+          from = at + 5;
+        }
+        disableAttributeHas.count = count;
+        return out + css.slice(from);
+      }
+
       function fix(css, base) {
         css = css.replace(RELATIVE_COLOR, function (match, name) {
           return "-claude-web-unsupported-" + name + "(from ";
         });
+        css = disableAttributeHas(css);
         // Paths inside the file were relative to it; it now lives in the page, so make them absolute.
         css = css.replace(/url\(\s*(['"]?)([^'")\s]+)\1\s*\)/gi, function (match, quote, path) {
           return "url(" + quote + absolute(path, base) + quote + ")";
@@ -363,7 +403,7 @@ enum PageScripts {
           if (typeof css !== "string") throw new Error("No text came back");
           var count = (css.match(RELATIVE_COLOR) || []).length;
           var how = insert(link, fix(css, url.href));
-          report({ fixed: url.href, count: count, how: how });
+          report({ fixed: url.href, count: count, hasCount: disableAttributeHas.count || 0, how: how });
           dispatch(link, "load");
         }).catch(function (error) {
           report({ failed: url.href, error: String((error && error.message) || error) });
