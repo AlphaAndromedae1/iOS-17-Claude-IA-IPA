@@ -156,22 +156,20 @@ final class BlockList {
         return String(data: data, encoding: .utf8)
     }
 
-    /// Installs the current list on `controller`. Takes effect for requests made after `completion`.
-    func apply(to controller: WKUserContentController, completion: @escaping () -> Void) {
-        controller.removeAllContentRuleLists()
+    /// Compiles the current list, or gives nil when blocking is off or the list can't be compiled.
+    /// `WebViewController.installContentRules` installs it alongside the iOS 17 style fix rules.
+    func compileRuleList(completion: @escaping (WKContentRuleList?) -> Void) {
         guard isEnabled, let json = ruleListJSON() else {
-            completion()
+            completion(nil)
             return
         }
         WKContentRuleListStore.default().compileContentRuleList(
             forIdentifier: Self.ruleListIdentifier, encodedContentRuleList: json
         ) { list, error in
-            if let list {
-                controller.add(list)
-            } else if let error {
+            if let error {
                 DebugLog.shared.error("Tracker blocking", "Couldn't install the block list", details: error.localizedDescription)
             }
-            completion()
+            completion(list)
         }
     }
 }

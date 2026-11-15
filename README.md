@@ -31,11 +31,17 @@ WebKit (`WebCore::RenderThemeIOS::systemColor`) while reading one of claude.ai's
 trigger is CSS **relative colour syntax** such as `rgb(from red r g b)` in an `@supports` test,
 the kind of rule recent versions of Tailwind CSS emit.
 
-Before WebKit reads one of claude.ai's own style sheets, the app takes it over and downloads it. If
-the file contains relative colours, the app renames each one to an unknown function. WebKit ignores
+The app doesn't let WebKit load style sheets from Claude's own servers (a content rule list, the
+mechanism Safari content blockers use), so WebKit never reads the originals. Instead, the app loads
+each of those files itself and renames every relative colour to an unknown function. WebKit ignores
 unknown functions instead of crashing, the same way it treats any CSS feature it doesn't support.
-The corrected CSS is then added to the page in the original's place. Files without relative colours
-load exactly as before. Settings → Debug Log lists each file that was fixed.
+The corrected CSS is then added to the page right where the original `<link>` was. Files without
+relative colours are added unchanged. Settings → Debug Log lists every file that went through the
+fix, and whether anything was changed.
+
+(Version 1.3.0 tried to swap the files from a script while WebKit was still downloading them. WebKit
+reads a style sheet as soon as its download finishes, and that happened first, so it still crashed.
+Blocking the download avoids that race.)
 
 ## Features
 

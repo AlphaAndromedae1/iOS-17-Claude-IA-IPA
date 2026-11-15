@@ -1,6 +1,46 @@
 import Foundation
 import WebKit
 
+/// The rules half of the iOS 17.3 style fix: WebKit isn't allowed to load style sheets from Claude's
+/// own servers itself, so it never parses the originals that crash it. `PageScripts.styleFix` loads
+/// each of them instead and adds a corrected copy to the page. A content rule list is checked
+/// before a request is even made, so unlike changing the `<link>` from a script there's no race
+/// with the download.
+enum StyleFixRules {
+
+    static let identifier = "ClaudeWebStyleFix"
+
+    /// Keep in step with `OWN_HOST` in `PageScripts.styleFix`.
+    static let hosts = ["claude.ai", "claude.com", "anthropic.com"]
+
+    @MainActor
+    static func compile(completion: @escaping (WKContentRuleList?) -> Void) {
+        let rules: [[String: Any]] = hosts.map { host in
+            let pattern = "^https?://([^:/]+\\.)?" + host.replacingOccurrences(of: ".", with: "\\.") + "[:/]"
+            return [
+                "trigger": ["url-filter": pattern, "resource-type": ["style-sheet"]],
+                "action": ["type": "block"],
+            ]
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: rules),
+              let json = String(data: data, encoding: .utf8) else {
+            completion(nil)
+            return
+        }
+        WKContentRuleListStore.default().compileContentRuleList(
+            forIdentifier: identifier, encodedContentRuleList: json
+        ) { list, error in
+            if let error {
+                DebugLog.shared.error(
+                    "Style fix", "Couldn't install the iOS 17 style fix rules",
+                    details: error.localizedDescription + "\nWithout them, claude.ai may crash on iOS 17.3."
+                )
+            }
+            completion(list)
+        }
+    }
+}
+
 /// The native half of `PageScripts.styleFix`.
 ///
 /// The page script downloads claude.ai's style sheets itself, but browsers only let a page read a
@@ -15,6 +55,8 @@ final class StyleSheetFetcher: NSObject, WKScriptMessageHandlerWithReply {
 
     /// File names of the style sheets fixed this session.
     private(set) var fixedSheets: [String] = []
+    /// Style sheets the page script loaded in WebKit's place this session, fixed or not.
+    private(set) var loadedSheets = 0
 
     func userContentController(
         _ userContentController: WKUserContentController,
@@ -28,24 +70,48 @@ final class StyleSheetFetcher: NSObject, WKScriptMessageHandlerWithReply {
 
         if let fixed = body["fixed"] as? String {
             let name = URL(string: fixed)?.lastPathComponent ?? fixed
-            if !fixedSheets.contains(name) && fixedSheets.count < 50 {
-                fixedSheets.append(name)
-            }
             let count = (body["count"] as? NSNumber)?.intValue ?? 0
-            DebugLog.shared.info(
-                "Style fix", "Fixed \(name) for iOS 17",
-                details: "Replaced \(count) relative colour expression\(count == 1 ? "" : "s") that crash WebKit "
-                    + "on iOS 17.3.\nFile: \(fixed.components(separatedBy: "?")[0])"
-            )
+            let how = body["how"] as? String == "constructed"
+                ? "\nAdded as a constructed style sheet, because the page's Content Security Policy refused a <style>."
+                : ""
+            let file = "\nFile: \(fixed.components(separatedBy: "?")[0])"
+            loadedSheets += 1
+            if count > 0 {
+                if !fixedSheets.contains(name) && fixedSheets.count < 50 {
+                    fixedSheets.append(name)
+                }
+                DebugLog.shared.info(
+                    "Style fix", "Fixed \(name) for iOS 17",
+                    details: "Replaced \(count) relative colour expression\(count == 1 ? "" : "s") that crash "
+                        + "WebKit on iOS 17.3." + how + file
+                )
+            } else {
+                DebugLog.shared.info(
+                    "Style fix", "Loaded \(name), nothing to fix",
+                    details: "WebKit isn't allowed to load Claude's style sheets itself, so the app loaded this "
+                        + "one. It had no relative colours." + how + file
+                )
+            }
             replyHandler(nil, nil)
             return
         }
 
         if let failed = body["failed"] as? String {
             DebugLog.shared.error(
-                "Style fix", "Couldn't fix \(URL(string: failed)?.lastPathComponent ?? failed)",
-                details: "The style sheet was handed back to WebKit unchanged, so the page may crash.\n"
+                "Style fix", "Couldn't load \(URL(string: failed)?.lastPathComponent ?? failed)",
+                details: "The page will be missing these styles.\n"
                     + "Reason: \(body["error"] as? String ?? "unknown")\nFile: \(failed.components(separatedBy: "?")[0])"
+            )
+            replyHandler(nil, nil)
+            return
+        }
+
+        if let seen = body["seen"] as? String {
+            let address = seen.components(separatedBy: "?")[0]
+            DebugLog.shared.info(
+                "Style fix", "Style sheet from another server: \(URL(string: seen)?.host ?? address)",
+                details: "The iOS 17 style fix only covers Claude's own servers, so WebKit loads this one "
+                    + "itself. If the page still crashes, this could be the file.\nFile: \(address)"
             )
             replyHandler(nil, nil)
             return

@@ -69,36 +69,60 @@ enum PageScripts {
     """#
 
     /// Works around a WebKit crash on iOS 17.3. claude.ai's style sheets use CSS relative colour
-    /// syntax, such as `rgb(from red r g b)` in an `@supports` test, which recent Tailwind CSS
-    /// emits. The WebKit in iOS 17.3 crashes while parsing that (in `RenderThemeIOS::systemColor`),
-    /// taking the page down every time it loads; Safari crashes the same way.
+    /// syntax, such as `rgb(from red r g b)` in an `@supports` test. The WebKit in iOS 17.3 crashes
+    /// while parsing that (in `RenderThemeIOS::systemColor`), taking the page down every time it
+    /// loads; Safari crashes the same way.
     ///
-    /// Before WebKit parses one of claude.ai's own style sheets, this script takes the `<link>`
-    /// over: it downloads the file, and if it contains relative colours, renames each one to an
-    /// unknown function, which WebKit simply treats as unsupported, then adds the corrected CSS to
-    /// the page in the link's place. Sheets without relative colours are handed straight back.
+    /// `StyleFixRules` stops WebKit from loading style sheets from Claude's own servers, so it never
+    /// parses the originals. This script loads each of those sheets itself, renames every relative
+    /// colour to an unknown function, which WebKit treats as unsupported, and adds the result to the
+    /// page right where the `<link>` is. The link's blocked "error" is kept from the page, which gets
+    /// "load" instead once the copy is in place.
     static let styleFix = #"""
     (function () {
       if (window.top !== window || window.__claudeWebStyleFix) return;
       window.__claudeWebStyleFix = true;
 
+      // Keep in step with StyleFixRules.hosts in the app.
       var OWN_HOST = /(^|\.)(claude\.ai|claude\.com|anthropic\.com)$/i;
-      var HAS_RELATIVE_COLOR = /\b(rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\(\s*from\s/i;
       var RELATIVE_COLOR = /\b(rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\(\s*from\s/gi;
       var handlers = window.webkit && window.webkit.messageHandlers;
       var native = handlers && handlers.styleSheet;
 
-      function isStyleSheetLink(node) {
-        return node.nodeName === "LINK" && /(^|\s)stylesheet(\s|$)/i.test(node.getAttribute("rel") || "");
+      function report(message) {
+        try { if (native) native.postMessage(message); } catch (e) {}
       }
 
-      // Keep the page hidden while its first style sheets are swapped, instead of flashing it unstyled.
+      function isStyleSheetLink(node) {
+        return !!node && node.nodeName === "LINK" &&
+          /(^|\s)stylesheet(\s|$)/i.test(node.getAttribute("rel") || "");
+      }
+
+      function ownURL(link) {
+        try {
+          var url = new URL(link.getAttribute("href") || "", document.baseURI);
+          return url.protocol === "https:" && OWN_HOST.test(url.hostname) ? url : null;
+        } catch (e) {
+          return null;
+        }
+      }
+
+      // The app blocks the original download, so the link fires "error". Keep that from the page;
+      // it gets "load" (or a real "error") once the copy is in place.
+      window.addEventListener("error", function (event) {
+        var link = event.target;
+        if (!isStyleSheetLink(link) || link.__claudeWebDispatching || !ownURL(link)) return;
+        event.stopImmediatePropagation();
+        takeOver(link);
+      }, true);
+
+      // Keep the page hidden while its first style sheets load, instead of flashing it unstyled.
       var waiting = 0, safety = null;
       function hide() {
         waiting += 1;
         if (waiting === 1) {
           document.documentElement.style.setProperty("visibility", "hidden", "important");
-          safety = setTimeout(function () { waiting = 1; show(); }, 5000);
+          safety = setTimeout(function () { waiting = 1; show(); }, 6000);
         }
       }
       function show() {
@@ -158,46 +182,41 @@ enum PageScripts {
         } else {
           (document.head || document.documentElement).appendChild(style);
         }
-        if (style.sheet) return;
+        if (style.sheet) return "style";
         // The page's Content Security Policy refused the <style>; constructed sheets aren't subject to it.
         style.remove();
-        try {
-          var sheet = new CSSStyleSheet(media ? { media: media } : undefined);
-          sheet.replaceSync(css);
-          document.adoptedStyleSheets = document.adoptedStyleSheets.concat([sheet]);
-        } catch (e) {}
+        var sheet = new CSSStyleSheet(media ? { media: media } : undefined);
+        sheet.replaceSync(css);
+        document.adoptedStyleSheets = document.adoptedStyleSheets.concat([sheet]);
+        return "constructed";
+      }
+
+      function dispatch(link, type) {
+        link.__claudeWebDispatching = true;
+        try { link.dispatchEvent(new Event(type)); } finally { link.__claudeWebDispatching = false; }
       }
 
       function takeOver(link) {
         if (link.__claudeWebStyleFix || !isStyleSheetLink(link)) return;
-        var url;
-        try { url = new URL(link.href, document.baseURI); } catch (e) { return; }
-        if (url.protocol !== "https:" || !OWN_HOST.test(url.hostname)) return;
         link.__claudeWebStyleFix = true;
+        var url = ownURL(link);
+        if (!url) {
+          // Not covered by the fix; noted in the debug log in case it's where a crash comes from.
+          if (link.href) report({ seen: link.href });
+          return;
+        }
 
-        // WebKit parses a sheet only once it has finished downloading, which is always after this
-        // runs. Changing rel now drops it before that happens.
-        var rel = link.getAttribute("rel");
-        link.setAttribute("rel", "x-claude-web-pending");
         var held = document.readyState !== "complete";
         if (held) hide();
-
         getText(url.href).then(function (css) {
-          if (typeof css !== "string") throw new Error("No text");
-          if (!HAS_RELATIVE_COLOR.test(css)) {
-            link.setAttribute("rel", rel);  // nothing to fix: let WebKit load it as usual
-            return;
-          }
+          if (typeof css !== "string") throw new Error("No text came back");
           var count = (css.match(RELATIVE_COLOR) || []).length;
-          insert(link, fix(css, url.href));
-          try { native && native.postMessage({ fixed: url.href, count: count }); } catch (e) {}
-          // Whoever waits on this link (a lazily loaded part of the app, say) can carry on.
-          link.dispatchEvent(new Event("load"));
+          var how = insert(link, fix(css, url.href));
+          report({ fixed: url.href, count: count, how: how });
+          dispatch(link, "load");
         }).catch(function (error) {
-          link.setAttribute("rel", rel);
-          try {
-            native && native.postMessage({ failed: url.href, error: String(error && error.message || error) });
-          } catch (e) {}
+          report({ failed: url.href, error: String((error && error.message) || error) });
+          dispatch(link, "error");
         }).then(function () {
           if (held) show();
         });

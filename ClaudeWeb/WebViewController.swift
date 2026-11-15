@@ -108,10 +108,29 @@ final class WebViewController: UIViewController {
         try? FileManager.default.removeItem(at: Self.downloadsFolder)
 
         spinner.startAnimating()
-        // Install the block list first, so not even the first page load reaches a tracker.
+        // Install the content rules first, so the very first page load already has the iOS 17
+        // style fix and tracker blocking.
         let firstPage = restoredPage() ?? Self.homeURL
-        blockList.apply(to: webView.configuration.userContentController) { [weak self] in
+        installContentRules { [weak self] in
             self?.load(firstPage)
+        }
+    }
+
+    /// Installs the iOS 17 style fix rules and the tracker block list together. Each takes effect for
+    /// requests made after `completion`.
+    private func installContentRules(completion: @escaping () -> Void) {
+        StyleFixRules.compile { [weak self] styleFixRules in
+            guard let self else { return }
+            self.blockList.compileRuleList { [weak self] trackerRules in
+                guard let self else { return }
+                let controller = self.webView.configuration.userContentController
+                controller.removeAllContentRuleLists()
+                if !self.addOnsDisabled {
+                    if let styleFixRules { controller.add(styleFixRules) }
+                    if let trackerRules { controller.add(trackerRules) }
+                }
+                completion()
+            }
         }
     }
 
@@ -425,7 +444,7 @@ final class WebViewController: UIViewController {
             DeviceInfo.summary,
             "Add-ons (iOS 17 style fix, page scripts, tracker blocking): "
                 + (addOnsDisabled ? "off for this session" : "on"),
-            "Style sheets fixed for iOS 17: "
+            "Style sheets loaded through the iOS 17 fix: \(styleSheetFetcher.loadedSheets), fixed: "
                 + (styleSheetFetcher.fixedSheets.isEmpty ? "none" : styleSheetFetcher.fixedSheets.joined(separator: ", ")),
             "Tracker blocking: \(blockList.isEnabled ? "on" : "off"), \(blockList.hosts.count) addresses",
             "Current page: " + (webView.url?.host ?? webView.url?.scheme ?? "none"),
@@ -433,6 +452,9 @@ final class WebViewController: UIViewController {
             "Times the page stopped this session: \(stopLog.count)",
         ]
         lines += stopLog.map { "  \(time.string(from: $0.date))  \($0.reason)" }
+        let styleFix = DebugLog.shared.entries.filter { $0.category == "Style fix" }.suffix(15)
+        lines += ["", "Style fix activity:"]
+        lines += styleFix.isEmpty ? ["  none"] : styleFix.map { "  " + DebugLog.describe($0) }
         let problems = DebugLog.shared.text(onlyProblems: true, limit: 25)
         lines += ["", "Latest problems from the debug log:", problems.isEmpty ? "  none" : problems]
         return lines.joined(separator: "\n")
@@ -465,7 +487,7 @@ final class WebViewController: UIViewController {
             // With add-ons off for troubleshooting, the new list waits until the app is next opened.
             guard changed, let self, !self.addOnsDisabled else { return }
             // Scripts that already loaded stay loaded, so reload for the new list to take full effect.
-            self.blockList.apply(to: self.webView.configuration.userContentController) { [weak self] in
+            self.installContentRules { [weak self] in
                 self?.reloadPage()
             }
         }
@@ -648,7 +670,7 @@ extension WebViewController {
 
     fileprivate func webContentStopped(reasonCode code: Int?) {
         endProgress()
-        stopLog.append((date: Date(), reason: Self.describeStop(code)))
+        stopLog.append((date: Date(), reason: Self.describeStop(code) + (addOnsDisabled ? " (add-ons off)" : "")))
         DebugLog.shared.error(
             "Web page", "The page \(Self.describeStop(code))",
             details: "Address: \(Self.shortAddress(webView.url))\n"
