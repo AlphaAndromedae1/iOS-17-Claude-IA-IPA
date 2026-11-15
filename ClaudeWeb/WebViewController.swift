@@ -33,6 +33,10 @@ final class WebViewController: UIViewController {
     private var progressTimer: Timer?
     private var failedURL: URL?
     private var crashDates: [Date] = []
+    fileprivate var stopLog: [(date: Date, reason: String)] = []
+    private var pagesFinished = 0
+    /// Set by Troubleshoot > Reload Without Add-ons, until the app is next opened.
+    private var addOnsDisabled = false
     private var reloadWhenActive = false
     private var downloads: [WKDownload: URL] = [:]
     private var statusBarStyle: UIStatusBarStyle = .default
@@ -150,12 +154,16 @@ final class WebViewController: UIViewController {
         webView.load(URLRequest(url: url))
     }
 
-    private func reloadPage() {
-        crashDates.removeAll()
-        if webView.url == nil || failedURL != nil {
+    /// Reloads the current web page, or goes to claude.ai if there isn't one (after the test page, say).
+    private func reloadPage(resettingStops: Bool = true) {
+        if resettingStops {
+            crashDates.removeAll()
+        }
+        let current = webView.url.flatMap { $0.scheme == "https" || $0.scheme == "http" ? $0 : nil }
+        if current == nil || failedURL != nil {
             spinner.startAnimating()
         }
-        load(failedURL ?? webView.url ?? Self.homeURL)
+        load(failedURL ?? current ?? Self.homeURL)
     }
 
     private func showError(title: String, message: String) {
@@ -313,6 +321,9 @@ final class WebViewController: UIViewController {
         sheet.addAction(UIAlertAction(title: "Privacy Report", style: .default) { [weak self] _ in
             self?.showPrivacyReport()
         })
+        sheet.addAction(UIAlertAction(title: "Troubleshoot…", style: .default) { [weak self] _ in
+            self?.showTroubleshooting()
+        })
         sheet.addAction(UIAlertAction(title: "Clear Cache", style: .default) { [weak self] _ in
             self?.clearCache()
         })
@@ -345,10 +356,102 @@ final class WebViewController: UIViewController {
         load(url)
     }
 
+    // MARK: - Troubleshooting
+
+    private func showTroubleshooting() {
+        let sheet = UIAlertController(
+            title: "Troubleshoot",
+            message: "Try these one at a time to narrow down why the page stops.",
+            preferredStyle: .actionSheet
+        )
+        sheet.addAction(UIAlertAction(title: "Load a Test Page", style: .default) { [weak self] _ in
+            self?.loadTestPage()
+        })
+        sheet.addAction(UIAlertAction(title: "Reload Without Add-ons", style: .default) { [weak self] _ in
+            self?.reloadWithoutAddOns()
+        })
+        sheet.addAction(UIAlertAction(title: "Copy Diagnostics", style: .default) { [weak self] _ in
+            self?.copyDiagnostics()
+        })
+        sheet.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        if let popover = sheet.popoverPresentationController {
+            popover.sourceView = view
+            popover.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.midY, width: 0, height: 0)
+            popover.permittedArrowDirections = []
+        }
+        topmostPresented.present(sheet, animated: true)
+    }
+
+    /// A tiny page made by the app itself, with no network. If even this stops, WebKit is failing in
+    /// this app no matter what page it shows; if it stays up, the problem is specific to claude.ai.
+    private func loadTestPage() {
+        failedURL = nil
+        crashDates.removeAll()
+        errorView.isHidden = true
+        spinner.startAnimating()
+        webView.loadHTMLString(Self.testPageHTML, baseURL: nil)
+    }
+
+    /// Takes out everything the app adds to the page (both scripts and the tracker block list) until
+    /// the app is next opened, to rule them out as the cause.
+    private func reloadWithoutAddOns() {
+        addOnsDisabled = true
+        let controller = webView.configuration.userContentController
+        controller.removeAllUserScripts()
+        controller.removeAllContentRuleLists()
+        crashDates.removeAll()
+        reloadPage()
+        showAlert(
+            title: "Add-ons are off",
+            message: "Claude is loading without the app's scripts and tracker blocking. They come back the next "
+                + "time you open the app."
+        )
+    }
+
+    private func copyDiagnostics() {
+        let time = DateFormatter()
+        time.dateFormat = "HH:mm:ss"
+        var lines = [
+            "\(AppInfo.name) diagnostics",
+            AppInfo.version,
+            DeviceInfo.summary,
+            "Add-ons (page scripts, tracker blocking): " + (addOnsDisabled ? "off for this session" : "on"),
+            "Tracker blocking: \(blockList.isEnabled ? "on" : "off"), \(blockList.hosts.count) addresses",
+            "Current page: " + (webView.url?.host ?? webView.url?.scheme ?? "none"),
+            "Pages finished loading this session: \(pagesFinished)",
+            "Times the page stopped this session: \(stopLog.count)",
+        ]
+        lines += stopLog.map { "  \(time.string(from: $0.date))  \($0.reason)" }
+        UIPasteboard.general.string = lines.joined(separator: "\n")
+        showAlert(title: "Diagnostics copied", message: "Paste them into your chat. They contain nothing from your conversations.")
+    }
+
+    private static let testPageHTML = """
+    <!doctype html>
+    <html><head><meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+      body { font: -apple-system-body; margin: 0; padding: 32px 24px; background: #262624; color: #f0eee6; }
+      h1 { font-size: 24px; margin-top: 0; }
+      p { line-height: 1.5; color: #c2c0b6; }
+      a { color: #d97757; font-weight: 600; }
+    </style></head>
+    <body>
+    <h1>The web view works</h1>
+    <p>The app made this page itself, without the internet. If you can read this, WebKit is running.</p>
+    <p id="js">JavaScript is <b>not</b> running.</p>
+    <p>If this page stays up while claude.ai keeps stopping, the problem is specific to claude.ai on this phone.
+    If this page stops too, WebKit itself is failing in this app, which usually comes from something
+    installed on the phone, such as a jailbreak tweak.</p>
+    <p><a href="https://claude.ai/">Back to Claude</a></p>
+    <script>document.getElementById("js").textContent = "JavaScript is running.";</script>
+    </body></html>
+    """
+
     private func showPrivacyReport() {
         let report = NetworkReportViewController(log: networkLog, blockList: blockList)
         report.onFinish = { [weak self] changed in
-            guard changed, let self else { return }
+            // With add-ons off for troubleshooting, the new list waits until the app is next opened.
+            guard changed, let self, !self.addOnsDisabled else { return }
             // Scripts that already loaded stay loaded, so reload for the new list to take full effect.
             self.blockList.apply(to: self.webView.configuration.userContentController) { [weak self] in
                 self?.reloadPage()
@@ -466,6 +569,7 @@ extension WebViewController: WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        pagesFinished += 1
         endProgress()
         spinner.stopAnimating()
         errorView.isHidden = true
@@ -482,12 +586,59 @@ extension WebViewController: WKNavigationDelegate {
         handleLoadError(error, pageWasShowing: !spinner.isAnimating)
     }
 
+    /// Only called if WebKit doesn't use the private version below.
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
-        endProgress()
+        webContentStopped(reasonCode: nil)
+    }
 
-        // Killed while in the background: bring the page back when the app is next opened.
+    /// WebKit's private `WKNavigationDelegatePrivate` version of the callback above, which also says
+    /// why the page stopped (`_WKProcessTerminationReason`). When a delegate has it, WebKit calls it
+    /// instead of the public one.
+    @objc(_webView:webContentProcessDidTerminateWithReason:)
+    func webView(_ webView: WKWebView, webContentProcessDidTerminateWithReason reason: Int) {
+        webContentStopped(reasonCode: reason)
+    }
+}
+
+// MARK: - When the page stops
+
+extension WebViewController {
+
+    /// Wording for `_WKProcessTerminationReason`.
+    static func describeStop(_ code: Int?) -> String {
+        switch code {
+        case 0?: return "went over the memory limit"
+        case 1?: return "used too much processor time"
+        case 2?: return "stopped by the app"
+        case 3?: return "crashed"
+        case let other?: return "stopped (code \(other))"
+        case nil: return "stopped (no reason given)"
+        }
+    }
+
+    fileprivate func webContentStopped(reasonCode code: Int?) {
+        endProgress()
+        stopLog.append((date: Date(), reason: Self.describeStop(code)))
+        if stopLog.count > 30 {
+            stopLog.removeFirst(stopLog.count - 30)
+        }
+
+        // Stopped while in the background: bring the page back when the app is next opened.
         if UIApplication.shared.applicationState == .background {
             reloadWhenActive = true
+            return
+        }
+
+        // The Troubleshoot test page (about:blank) stopping is a result worth showing, not retrying.
+        if webView.url?.scheme == "about" {
+            failedURL = Self.homeURL
+            showError(
+                title: "The test page stopped too",
+                message: "Even a tiny page the app made itself \(Self.describeStop(code)). So WebKit is failing in "
+                    + "this app whatever the page, not because of claude.ai. That usually comes from something "
+                    + "installed on the phone, such as a jailbreak tweak that loads into apps or web pages."
+                    + "\n\n\(DeviceInfo.summary) · \(AppInfo.version)"
+            )
             return
         }
 
@@ -495,15 +646,27 @@ extension WebViewController: WKNavigationDelegate {
         crashDates = crashDates.filter { now.timeIntervalSince($0) < Self.crashWindow } + [now]
         if crashDates.count >= Self.crashLimit {
             failedURL = webView.url ?? Self.homeURL
-            showError(
-                title: "Claude keeps stopping",
-                message: "iOS closed the page \(crashDates.count) times in a short while, usually because "
-                    + "the phone ran low on memory. Close some other apps and tap Reload. If it keeps "
-                    + "happening, choose Options > Clear Cache."
-            )
+            showError(title: "Claude keeps stopping", message: stopMessage(code: code))
             return
         }
-        load(webView.url ?? Self.homeURL)
+        reloadPage(resettingStops: false)
+    }
+
+    private func stopMessage(code: Int?) -> String {
+        let count = crashDates.count
+        let advice: String
+        switch code {
+        case 0?:
+            advice = "iOS stopped the page \(count) times because it went over the memory limit for web pages. "
+                + "Close other apps and tap Reload."
+        case 3?:
+            advice = "The page crashed \(count) times in a row. That's a crash, not low memory, so clearing the "
+                + "cache won't fix it. Options > Troubleshoot can narrow down the cause."
+        default:
+            advice = "iOS stopped the page \(count) times in a short while (\(Self.describeStop(code))). "
+                + "Options > Troubleshoot can narrow down the cause."
+        }
+        return advice + "\n\n\(DeviceInfo.summary) · \(AppInfo.version)"
     }
 }
 

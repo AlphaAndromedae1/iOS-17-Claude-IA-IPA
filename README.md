@@ -180,6 +180,26 @@ Debug builds run from Xcode can be inspected; the release IPA built by GitHub Ac
 debug build, connect the iPhone to a Mac and enable Settings → Safari → Advanced → Web Inspector. Then, in
 Safari on the Mac, choose Develop → *your iPhone* → claude.ai.
 
+## Troubleshooting
+
+If you see **"Claude keeps stopping"**, the screen shows why iOS stopped the page (a crash or the
+memory limit) along with your device and iOS version. Shake the phone, or tap Options, then choose
+**Troubleshoot…**:
+
+1. **Load a Test Page** shows a tiny page the app makes itself, with no network.
+   - If it stays up, WebKit works and the problem is specific to claude.ai.
+   - If it stops too, WebKit is failing in this app for any page. That usually comes from something
+     installed on the phone, such as a jailbreak tweak that loads into apps or web content.
+2. **Reload Without Add-ons** loads claude.ai without the app's two scripts and the tracker block list
+   until the app is next opened. If Claude then works, one of those was the cause.
+3. **Copy Diagnostics** copies your device, iOS version and each time the page stopped (with the
+   reason). There's no chat content in it.
+
+Also worth checking: does claude.ai open in **Safari** on the same phone? If Safari fails too, the
+problem is the phone, not this app. iOS also records these events under Settings → Privacy & Security →
+Analytics & Improvements → Analytics Data. Entries starting with `com.apple.WebKit.WebContent` are
+crashes, and `JetsamEvent` entries are memory kills.
+
 ## Limitations
 
 - Needs iOS 16.4 or later. For iOS 13–16.3, use claude-legacy-ios.

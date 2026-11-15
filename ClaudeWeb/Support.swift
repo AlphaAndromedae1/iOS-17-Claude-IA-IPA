@@ -40,6 +40,32 @@ enum AppInfo {
     }
 }
 
+// MARK: - Device
+
+enum DeviceInfo {
+    /// The hardware identifier, such as "iPhone11,8".
+    static var model: String {
+        var info = utsname()
+        uname(&info)
+        return withUnsafeBytes(of: info.machine) { raw in
+            String(decoding: raw.prefix { $0 != 0 }, as: UTF8.self)
+        }
+    }
+
+    static var memory: String {
+        ByteCountFormatter.string(fromByteCount: Int64(ProcessInfo.processInfo.physicalMemory), countStyle: .memory)
+    }
+
+    static var systemVersion: String {
+        let os = ProcessInfo.processInfo.operatingSystemVersion
+        return "\(os.majorVersion).\(os.minorVersion).\(os.patchVersion)"
+    }
+
+    static var summary: String {
+        "\(model), \(memory) RAM, iOS \(systemVersion)"
+    }
+}
+
 // MARK: - User agent
 
 enum UserAgent {
