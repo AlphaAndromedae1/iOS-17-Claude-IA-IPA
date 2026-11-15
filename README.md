@@ -18,8 +18,9 @@ downloads every script, parses it with a JavaScript parser (Acorn), rewrites it,
 through the native bridge and evaluates it again. That is needed on iOS 15. On iOS 17 it is
 pure overhead and pushes the web process past its memory limit.
 
-The WebKit in **iOS 16.4 and later runs claude.ai without changes**. This app loads the site as is
-and adds just one tiny script (about 60 lines) that matches the status-bar colour to the page.
+The WebKit in **iOS 16.4 and later runs claude.ai without changes**. This app loads the site as is.
+It adds two small read-only scripts, one to match the status-bar colour to the page and one to list
+contacted servers for the Privacy Report, and it blocks known trackers.
 
 ## Features
 
@@ -32,13 +33,67 @@ and adds just one tiny script (about 60 lines) that matches the status-bar colou
 - File, photo and camera uploads; microphone for dictation and voice mode.
 - Downloads (artifacts, exported files) open the share sheet, so you can use Save to Files and similar.
 - Swipe from the edge to go back and forward.
+- Blocks known tracking, analytics and advertising services, and includes a Privacy Report (see below).
 - **Shake the phone** to open the menu:
   - Reload
   - New Chat
   - Open Copied Link
   - Open in Safari
+  - Privacy Report
   - Clear Cache
   - Sign Out and Reset
+
+## Privacy
+
+The app has no analytics, ads or third-party code of its own, and the only addresses built into it
+are claude.ai's. What it keeps stays on the phone: login cookies and site data, the address of
+your last chat, and downloads until you've saved them.
+
+### Tracker blocking
+
+Requests to known tracking services are stopped inside WebKit, the same way Safari content blockers
+work, so they never leave the phone. The default list, in `ClaudeWeb/TrackerBlocker.swift`, only
+contains services whose sole job is measuring, recording or advertising:
+
+- **Product analytics:** Segment, Amplitude, Mixpanel, Heap, Google Analytics and Tag Manager,
+  Cloudflare Web Analytics, Microsoft Clarity, HubSpot analytics
+- **Session recording:** Hotjar, FullStory, LogRocket, Mouseflow, Smartlook
+- **Error reporting:** Sentry, Datadog browser monitoring, New Relic
+- **Advertising and conversion pixels:** Google Ads and DoubleClick, Meta, X/Twitter, LinkedIn,
+  Reddit, TikTok, Bing, Pinterest, Snapchat, Criteo, Xandr
+
+None of these runs a Claude feature, so blocking them can't take one away, and a rule for a
+service claude.ai doesn't use simply never matches. These are deliberately **not** blocked, because
+claude.ai may rely on them:
+
+- feature-flag services such as Statsig and LaunchDarkly
+- the Intercom support chat
+- Cloudflare's security check, reCAPTCHA and hCaptcha
+- Stripe payments
+
+### Privacy Report
+
+Shake the phone and choose **Privacy Report** to see:
+
+- **Blocked This Session:** requests the block list stopped.
+- **Other Companies:** every non-Anthropic server the page contacted, with request counts and types
+  (script, fetch, image, …). Each has a switch to block it.
+- **Anthropic:** Claude's own servers. Analytics can be sent through Anthropic's own addresses as well.
+- **Needed for Claude to Work:** sign-in, Cloudflare's check, payments, artifacts and app files.
+  These can't be blocked.
+- **Block List:** every entry, with switches, plus *Add Address…* and *Restore Default List*.
+
+Changes apply when you close the report, and the page reloads. If something in Claude stops working,
+unblock the last address you added. **Copy** puts a plain-text summary (addresses and counts only) on
+the clipboard, so you can paste it into a chat and ask what each entry is.
+
+Limits:
+- The log lives in memory only and starts empty each time the app opens.
+- Requests made inside embedded frames, such as an artifact or the payment form, aren't listed one
+  by one. The frames themselves are listed.
+- WebSocket connections aren't listed.
+- The blocked count relies on a WebKit callback that Apple doesn't document. If a future iOS drops
+  it, blocking still works, but that section stays empty.
 
 ## Installing on your iPhone
 
@@ -109,7 +164,10 @@ The IPA is written to `build/ClaudeWeb.ipa`. To work in Xcode instead, run `xcod
 | `ClaudeWeb/WebViewController.swift` | Main screen: web view setup, crash recovery, downloads, shake menu |
 | `ClaudeWeb/PopupViewController.swift` | Windows the page opens itself (sign-in pop-ups) |
 | `ClaudeWeb/LinkRouter.swift` | Which URLs stay in the app, open in Safari, or open another app |
-| `ClaudeWeb/PageScripts.swift` | The single script injected into the page (status-bar colour) |
+| `ClaudeWeb/PageScripts.swift` | The two read-only scripts added to the page (status-bar colour, server list) |
+| `ClaudeWeb/TrackerBlocker.swift` | Default block list, essential hosts, compiling the WebKit content rules |
+| `ClaudeWeb/NetworkLog.swift` | In-memory record of contacted and blocked servers |
+| `ClaudeWeb/NetworkReportViewController.swift` | The Privacy Report screen |
 | `ClaudeWeb/Support.swift` | Colours, Safari user agent, JavaScript alert/confirm/prompt dialogs |
 | `Supporting/Info.plist` | App name, permissions text, orientations |
 | `scripts/make-icon.py` | Regenerates the app icon |

@@ -7,7 +7,8 @@ import WebKit
 /// iOS 16.4 and later ship a WebKit that runs claude.ai unmodified, so unlike wrappers
 /// built for older iOS this one does not intercept, transpile or re-evaluate the site's
 /// JavaScript. Doing that for every module is what exhausted memory and made iOS stop
-/// the web process. The page gets one small script (see `PageScripts`) and nothing else.
+/// the web process. The page gets two small read-only scripts (see `PageScripts`), and
+/// requests to known trackers are blocked inside WebKit (see `BlockList`).
 final class WebViewController: UIViewController {
 
     private static let homeURL = URL(string: "https://claude.ai/")!
@@ -26,6 +27,8 @@ final class WebViewController: UIViewController {
     private let spinner = UIActivityIndicatorView(style: .medium)
     private let bottomFill = UIView()
     private let errorView = ErrorView()
+    private let blockList = BlockList()
+    private let networkLog = NetworkLog()
 
     private var progressTimer: Timer?
     private var failedURL: URL?
@@ -96,7 +99,11 @@ final class WebViewController: UIViewController {
         try? FileManager.default.removeItem(at: Self.downloadsFolder)
 
         spinner.startAnimating()
-        load(restoredPage() ?? Self.homeURL)
+        // Install the block list first, so not even the first page load reaches a tracker.
+        let firstPage = restoredPage() ?? Self.homeURL
+        blockList.apply(to: webView.configuration.userContentController) { [weak self] in
+            self?.load(firstPage)
+        }
     }
 
     private func makeWebView() -> WKWebView {
@@ -114,6 +121,10 @@ final class WebViewController: UIViewController {
             source: PageScripts.pageColors, injectionTime: .atDocumentEnd, forMainFrameOnly: true
         ))
         content.add(WeakScriptMessageHandler(self), name: PageScripts.pageColorsMessage)
+        content.addUserScript(WKUserScript(
+            source: PageScripts.networkObserver, injectionTime: .atDocumentStart, forMainFrameOnly: true
+        ))
+        content.add(WeakScriptMessageHandler(self), name: PageScripts.networkMessage)
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = self
@@ -299,6 +310,9 @@ final class WebViewController: UIViewController {
                 UIApplication.shared.open(url)
             })
         }
+        sheet.addAction(UIAlertAction(title: "Privacy Report", style: .default) { [weak self] _ in
+            self?.showPrivacyReport()
+        })
         sheet.addAction(UIAlertAction(title: "Clear Cache", style: .default) { [weak self] _ in
             self?.clearCache()
         })
@@ -329,6 +343,18 @@ final class WebViewController: UIViewController {
         }
         spinner.startAnimating()
         load(url)
+    }
+
+    private func showPrivacyReport() {
+        let report = NetworkReportViewController(log: networkLog, blockList: blockList)
+        report.onFinish = { [weak self] changed in
+            guard changed, let self else { return }
+            // Scripts that already loaded stay loaded, so reload for the new list to take full effect.
+            self.blockList.apply(to: self.webView.configuration.userContentController) { [weak self] in
+                self?.reloadPage()
+            }
+        }
+        present(UINavigationController(rootViewController: report), animated: true)
     }
 
     /// Fixes a page that is stuck on an old or broken copy of the site; keeps you signed in.
@@ -389,6 +415,9 @@ extension WebViewController: WKNavigationDelegate {
         case .webView:
             let staysInApp = LinkRouter.isAppHost(url.host) || LinkRouter.isFlowHost(url.host)
             decisionHandler(staysInApp ? .allowWithoutTryingAppLink : .allow)
+            if url.scheme == "https" || url.scheme == "http" {
+                networkLog.recordNavigation(to: url, mainFrame: navigationAction.targetFrame?.isMainFrame ?? true)
+            }
         case .safariSheet:
             decisionHandler(.cancel)
             openInSafariSheet(url)
@@ -396,6 +425,20 @@ extension WebViewController: WKNavigationDelegate {
             decisionHandler(.cancel)
             openInOtherApp(url)
         }
+    }
+
+    /// WebKit reports each request a content rule list stopped. This is WebKit's private
+    /// `WKNavigationDelegatePrivate` callback (iOS 14 and later), the one Safari's own privacy
+    /// counts rely on. If WebKit stopped calling it, blocking would still work; only the
+    /// "Blocked This Session" list in the Privacy Report would stay empty.
+    @objc(_webView:contentRuleListWithIdentifier:performedAction:forURL:)
+    func webView(
+        _ webView: WKWebView,
+        contentRuleListWithIdentifier identifier: String?,
+        performedAction action: AnyObject?,
+        forURL url: URL?
+    ) {
+        networkLog.recordBlocked(url)
     }
 
     func webView(
@@ -536,9 +579,14 @@ extension WebViewController: WKUIDelegate {
 extension WebViewController: WKScriptMessageHandler {
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-        // Pop-ups share this configuration; only the main page decides the app's colours.
+        // Pop-ups share this configuration; only the main page counts.
+        guard message.webView === webView else { return }
+
+        if message.name == PageScripts.networkMessage {
+            networkLog.recordBatch(message.body)
+            return
+        }
         guard message.name == PageScripts.pageColorsMessage,
-              message.webView === webView,
               let body = message.body as? [String: Any],
               let top = UIColor(rgbComponents: body["top"]),
               let bottom = UIColor(rgbComponents: body["bottom"]) else { return }
