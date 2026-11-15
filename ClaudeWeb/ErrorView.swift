@@ -31,7 +31,7 @@ final class ErrorView: UIView {
         reloadButton.addAction(UIAction { [weak self] _ in self?.onReload?() }, for: .touchUpInside)
 
         let optionsButton = UIButton(type: .system)
-        optionsButton.setTitle("Options", for: .normal)
+        optionsButton.setTitle("Settings & Debug Log", for: .normal)
         optionsButton.setTitleColor(.secondaryLabel, for: .normal)
         optionsButton.addAction(UIAction { [weak self] _ in self?.onOptions?() }, for: .touchUpInside)
 

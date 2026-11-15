@@ -31,20 +31,24 @@ final class NetworkReportViewController: UITableViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         title = "Privacy Report"
-        navigationItem.leftBarButtonItem = UIBarButtonItem(
-            title: "Copy", style: .plain, target: self, action: #selector(copyReport)
-        )
-        navigationItem.rightBarButtonItem = UIBarButtonItem(
-            barButtonSystemItem: .done, target: self, action: #selector(close)
-        )
+        let copy = UIBarButtonItem(title: "Copy", style: .plain, target: self, action: #selector(copyReport))
+        if navigationController?.viewControllers.first === self {
+            navigationItem.leftBarButtonItem = copy
+            navigationItem.rightBarButtonItem = UIBarButtonItem(
+                barButtonSystemItem: .done, target: self, action: #selector(close)
+            )
+        } else {
+            // Opened from Settings: keep the back button.
+            navigationItem.rightBarButtonItem = copy
+        }
         listedHosts = Set(TrackerLists.defaultHosts).union(blockList.addedHosts).sorted()
         log.onChange = { [weak self] in self?.tableView.reloadData() }
     }
 
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
-        // Covers both Done and swiping the sheet away.
-        if navigationController?.isBeingDismissed ?? isBeingDismissed {
+        // Covers Done, going back to Settings, and swiping the sheet away.
+        if isMovingFromParent || (navigationController?.isBeingDismissed ?? isBeingDismissed) {
             finish()
         }
     }

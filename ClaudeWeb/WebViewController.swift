@@ -29,6 +29,7 @@ final class WebViewController: UIViewController {
     private let errorView = ErrorView()
     private let blockList = BlockList()
     private let networkLog = NetworkLog()
+    private let styleSheetFetcher = StyleSheetFetcher()
 
     private var progressTimer: Timer?
     private var failedURL: URL?
@@ -56,7 +57,7 @@ final class WebViewController: UIViewController {
         spinner.hidesWhenStopped = true
         errorView.isHidden = true
         errorView.onReload = { [weak self] in self?.reloadPage() }
-        errorView.onOptions = { [weak self] in self?.showMenu() }
+        errorView.onOptions = { [weak self] in self?.showSettings() }
 
         let subviews: [UIView] = [webView, bottomFill, progressBar, spinner, errorView]
         for subview in subviews {
@@ -98,6 +99,10 @@ final class WebViewController: UIViewController {
                            name: UIApplication.didEnterBackgroundNotification, object: nil)
         center.addObserver(self, selector: #selector(appWillEnterForeground),
                            name: UIApplication.willEnterForegroundNotification, object: nil)
+        center.addObserver(self, selector: #selector(memoryWarning),
+                           name: UIApplication.didReceiveMemoryWarningNotification, object: nil)
+
+        DebugLog.shared.info("App", "Opened \(AppInfo.version)", details: DeviceInfo.summary)
 
         // Downloads are only kept until they've been shared; drop any left over from last time.
         try? FileManager.default.removeItem(at: Self.downloadsFolder)
@@ -121,6 +126,11 @@ final class WebViewController: UIViewController {
         configuration.defaultWebpagePreferences.preferredContentMode = .mobile
 
         let content = configuration.userContentController
+        // First, so it's watching before the page's first style sheet arrives.
+        content.addUserScript(WKUserScript(
+            source: PageScripts.styleFix, injectionTime: .atDocumentStart, forMainFrameOnly: true
+        ))
+        content.addScriptMessageHandler(styleSheetFetcher, contentWorld: .page, name: PageScripts.styleSheetMessage)
         content.addUserScript(WKUserScript(
             source: PageScripts.pageColors, injectionTime: .atDocumentEnd, forMainFrameOnly: true
         ))
@@ -129,6 +139,10 @@ final class WebViewController: UIViewController {
             source: PageScripts.networkObserver, injectionTime: .atDocumentStart, forMainFrameOnly: true
         ))
         content.add(WeakScriptMessageHandler(self), name: PageScripts.networkMessage)
+        content.addUserScript(WKUserScript(
+            source: PageScripts.errorReporter, injectionTime: .atDocumentStart, forMainFrameOnly: true
+        ))
+        content.add(WeakScriptMessageHandler(self), name: PageScripts.pageErrorMessage)
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = self
@@ -177,6 +191,13 @@ final class WebViewController: UIViewController {
         if error.domain == NSURLErrorDomain && error.code == NSURLErrorCancelled { return }
         // 102: the load became a download or was cancelled by policy. 204: handled by a plug-in.
         if error.domain == "WebKitErrorDomain" && (error.code == 102 || error.code == 204) { return }
+
+        let failing = error.userInfo[NSURLErrorFailingURLErrorKey] as? URL ?? webView.url
+        DebugLog.shared.error(
+            "Loading", error.localizedDescription,
+            details: "\(error.domain) error \(error.code)\nAddress: \(failing?.absoluteString ?? "unknown")"
+                + (pageWasShowing ? "\nThe page was already showing, so no error screen was shown." : "")
+        )
         // A failure after the page is already up isn't worth hiding it behind a full-screen error.
         if pageWasShowing { return }
 
@@ -222,6 +243,11 @@ final class WebViewController: UIViewController {
 
     @objc private func appDidEnterBackground() {
         rememberCurrentPage()
+        DebugLog.shared.save()
+    }
+
+    @objc private func memoryWarning() {
+        DebugLog.shared.warning("App", "iOS reported low memory")
     }
 
     @objc private func appWillEnterForeground() {
@@ -318,17 +344,8 @@ final class WebViewController: UIViewController {
                 UIApplication.shared.open(url)
             })
         }
-        sheet.addAction(UIAlertAction(title: "Privacy Report", style: .default) { [weak self] _ in
-            self?.showPrivacyReport()
-        })
-        sheet.addAction(UIAlertAction(title: "Troubleshoot…", style: .default) { [weak self] _ in
-            self?.showTroubleshooting()
-        })
-        sheet.addAction(UIAlertAction(title: "Clear Cache", style: .default) { [weak self] _ in
-            self?.clearCache()
-        })
-        sheet.addAction(UIAlertAction(title: "Sign Out and Reset…", style: .destructive) { [weak self] _ in
-            self?.confirmReset()
+        sheet.addAction(UIAlertAction(title: "Settings & Debug Log", style: .default) { [weak self] _ in
+            self?.showSettings()
         })
         sheet.addAction(UIAlertAction(title: "Cancel", style: .cancel))
 
@@ -356,30 +373,20 @@ final class WebViewController: UIViewController {
         load(url)
     }
 
-    // MARK: - Troubleshooting
+    // MARK: - Settings and troubleshooting
 
-    private func showTroubleshooting() {
-        let sheet = UIAlertController(
-            title: "Troubleshoot",
-            message: "Try these one at a time to narrow down why the page stops.",
-            preferredStyle: .actionSheet
+    private func showSettings() {
+        guard presentedViewController == nil else { return }
+        let actions = SettingsViewController.Actions(
+            addOnsEnabled: { [weak self] in !(self?.addOnsDisabled ?? false) },
+            diagnostics: { [weak self] in self?.diagnosticsText() ?? "" },
+            makePrivacyReport: { [weak self] in self?.makePrivacyReport() ?? UIViewController() },
+            loadTestPage: { [weak self] in self?.loadTestPage() },
+            reloadWithoutAddOns: { [weak self] in self?.reloadWithoutAddOns() },
+            clearCache: { [weak self] in self?.clearCache() },
+            signOutAndReset: { [weak self] in self?.signOutAndReset() }
         )
-        sheet.addAction(UIAlertAction(title: "Load a Test Page", style: .default) { [weak self] _ in
-            self?.loadTestPage()
-        })
-        sheet.addAction(UIAlertAction(title: "Reload Without Add-ons", style: .default) { [weak self] _ in
-            self?.reloadWithoutAddOns()
-        })
-        sheet.addAction(UIAlertAction(title: "Copy Diagnostics", style: .default) { [weak self] _ in
-            self?.copyDiagnostics()
-        })
-        sheet.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-        if let popover = sheet.popoverPresentationController {
-            popover.sourceView = view
-            popover.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.midY, width: 0, height: 0)
-            popover.permittedArrowDirections = []
-        }
-        topmostPresented.present(sheet, animated: true)
+        present(UINavigationController(rootViewController: SettingsViewController(actions: actions)), animated: true)
     }
 
     /// A tiny page made by the app itself, with no network. If even this stops, WebKit is failing in
@@ -403,27 +410,32 @@ final class WebViewController: UIViewController {
         reloadPage()
         showAlert(
             title: "Add-ons are off",
-            message: "Claude is loading without the app's scripts and tracker blocking. They come back the next "
-                + "time you open the app."
+            message: "Claude is loading without the app's scripts and tracker blocking, including the iOS 17 style "
+                + "fix, so claude.ai may crash again. Everything comes back the next time you open the app."
         )
     }
 
-    private func copyDiagnostics() {
+    /// For Settings > Copy Diagnostics: what's needed to work out a problem, nothing from conversations.
+    private func diagnosticsText() -> String {
         let time = DateFormatter()
         time.dateFormat = "HH:mm:ss"
         var lines = [
             "\(AppInfo.name) diagnostics",
             AppInfo.version,
             DeviceInfo.summary,
-            "Add-ons (page scripts, tracker blocking): " + (addOnsDisabled ? "off for this session" : "on"),
+            "Add-ons (iOS 17 style fix, page scripts, tracker blocking): "
+                + (addOnsDisabled ? "off for this session" : "on"),
+            "Style sheets fixed for iOS 17: "
+                + (styleSheetFetcher.fixedSheets.isEmpty ? "none" : styleSheetFetcher.fixedSheets.joined(separator: ", ")),
             "Tracker blocking: \(blockList.isEnabled ? "on" : "off"), \(blockList.hosts.count) addresses",
             "Current page: " + (webView.url?.host ?? webView.url?.scheme ?? "none"),
             "Pages finished loading this session: \(pagesFinished)",
             "Times the page stopped this session: \(stopLog.count)",
         ]
         lines += stopLog.map { "  \(time.string(from: $0.date))  \($0.reason)" }
-        UIPasteboard.general.string = lines.joined(separator: "\n")
-        showAlert(title: "Diagnostics copied", message: "Paste them into your chat. They contain nothing from your conversations.")
+        let problems = DebugLog.shared.text(onlyProblems: true, limit: 25)
+        lines += ["", "Latest problems from the debug log:", problems.isEmpty ? "  none" : problems]
+        return lines.joined(separator: "\n")
     }
 
     private static let testPageHTML = """
@@ -447,7 +459,7 @@ final class WebViewController: UIViewController {
     </body></html>
     """
 
-    private func showPrivacyReport() {
+    private func makePrivacyReport() -> UIViewController {
         let report = NetworkReportViewController(log: networkLog, blockList: blockList)
         report.onFinish = { [weak self] changed in
             // With add-ons off for troubleshooting, the new list waits until the app is next opened.
@@ -457,7 +469,7 @@ final class WebViewController: UIViewController {
                 self?.reloadPage()
             }
         }
-        present(UINavigationController(rootViewController: report), animated: true)
+        return report
     }
 
     /// Fixes a page that is stuck on an old or broken copy of the site; keeps you signed in.
@@ -468,27 +480,20 @@ final class WebViewController: UIViewController {
             WKWebsiteDataTypeFetchCache,
             WKWebsiteDataTypeServiceWorkerRegistrations,
         ]
+        DebugLog.shared.info("App", "Cleared the cache")
         WKWebsiteDataStore.default().removeData(ofTypes: types, modifiedSince: .distantPast) { [weak self] in
             self?.reloadPage()
         }
     }
 
-    private func confirmReset() {
-        let alert = UIAlertController(
-            title: "Sign out and reset?",
-            message: "This deletes the cookies, cache and stored data in this app. You'll need to sign in again.",
-            preferredStyle: .alert
-        )
-        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-        alert.addAction(UIAlertAction(title: "Reset", style: .destructive) { [weak self] _ in
-            UserDefaults.standard.removeObject(forKey: WebViewController.lastPageKey)
-            let store = WKWebsiteDataStore.default()
-            store.removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: .distantPast) {
-                self?.spinner.startAnimating()
-                self?.load(WebViewController.homeURL)
-            }
-        })
-        present(alert, animated: true)
+    private func signOutAndReset() {
+        UserDefaults.standard.removeObject(forKey: Self.lastPageKey)
+        DebugLog.shared.info("App", "Signed out and reset website data")
+        let store = WKWebsiteDataStore.default()
+        store.removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: .distantPast) { [weak self] in
+            self?.spinner.startAnimating()
+            self?.load(WebViewController.homeURL)
+        }
     }
 }
 
@@ -549,7 +554,30 @@ extension WebViewController: WKNavigationDelegate {
         decidePolicyFor navigationResponse: WKNavigationResponse,
         decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void
     ) {
+        if navigationResponse.isForMainFrame, let response = navigationResponse.response as? HTTPURLResponse {
+            logResponse(response)
+        }
         decisionHandler(navigationResponse.shouldDownload ? .download : .allow)
+    }
+
+    private func logResponse(_ response: HTTPURLResponse) {
+        let address = Self.shortAddress(response.url)
+        if (response.value(forHTTPHeaderField: "cf-mitigated") ?? "").lowercased() == "challenge" {
+            DebugLog.shared.info("Loading", "Cloudflare security check on \(address)")
+        } else if response.statusCode >= 400 {
+            let ray = response.value(forHTTPHeaderField: "cf-ray").map { "\nCloudflare ray: \($0)" } ?? ""
+            DebugLog.shared.warning(
+                "Loading", "HTTP \(response.statusCode) from \(address)",
+                details: HTTPURLResponse.localizedString(forStatusCode: response.statusCode).capitalized + ray
+            )
+        }
+    }
+
+    /// Host and path only, without the query or fragment, which can hold tokens.
+    static func shortAddress(_ url: URL?) -> String {
+        guard let url else { return "unknown address" }
+        guard let host = url.host else { return url.scheme ?? "unknown address" }
+        return host + url.path
     }
 
     func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) {
@@ -562,6 +590,7 @@ extension WebViewController: WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         beginProgress()
+        DebugLog.shared.info("Loading", "Started \(Self.shortAddress(webView.url))")
     }
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
@@ -570,6 +599,7 @@ extension WebViewController: WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         pagesFinished += 1
+        DebugLog.shared.info("Loading", "Finished \(Self.shortAddress(webView.url))")
         endProgress()
         spinner.stopAnimating()
         errorView.isHidden = true
@@ -619,6 +649,14 @@ extension WebViewController {
     fileprivate func webContentStopped(reasonCode code: Int?) {
         endProgress()
         stopLog.append((date: Date(), reason: Self.describeStop(code)))
+        DebugLog.shared.error(
+            "Web page", "The page \(Self.describeStop(code))",
+            details: "Address: \(Self.shortAddress(webView.url))\n"
+                + "WebKit reason code: \(code.map { String($0) } ?? "not given")\n"
+                + "App state: \(UIApplication.shared.applicationState == .background ? "background" : "foreground")\n"
+                + "On iOS 17, a crash while reading a style sheet is what the iOS 17 style fix works around. "
+                + "Settings > Debug Log shows whether a sheet was fixed."
+        )
         if stopLog.count > 30 {
             stopLog.removeFirst(stopLog.count - 30)
         }
@@ -661,10 +699,10 @@ extension WebViewController {
                 + "Close other apps and tap Reload."
         case 3?:
             advice = "The page crashed \(count) times in a row. That's a crash, not low memory, so clearing the "
-                + "cache won't fix it. Options > Troubleshoot can narrow down the cause."
+                + "cache won't fix it. Settings & Debug Log shows the details and can narrow down the cause."
         default:
             advice = "iOS stopped the page \(count) times in a short while (\(Self.describeStop(code))). "
-                + "Options > Troubleshoot can narrow down the cause."
+                + "Settings & Debug Log shows the details and can narrow down the cause."
         }
         return advice + "\n\n\(DeviceInfo.summary) · \(AppInfo.version)"
     }
@@ -689,6 +727,7 @@ extension WebViewController: WKUIDelegate {
             if let url { openInOtherApp(url) }
             return nil
         case .webView:
+            DebugLog.shared.info("Window", "Opened a pop-up for \(Self.shortAddress(url))")
             let popup = PopupViewController(configuration: configuration)
             popup.downloadDelegate = self
             topmostPresented.present(UINavigationController(rootViewController: popup), animated: true)
@@ -737,6 +776,36 @@ extension WebViewController: WKUIDelegate {
     }
 }
 
+// MARK: - Errors reported by the page
+
+extension WebViewController {
+
+    /// A message from `PageScripts.errorReporter`: `{ kind, message, details, page }`.
+    fileprivate func logPageError(_ body: Any) {
+        guard let report = body as? [String: Any], let message = report["message"] as? String else { return }
+        let kind = report["kind"] as? String ?? "exception"
+        var details = report["details"] as? String ?? ""
+        if let page = report["page"] as? String, !page.isEmpty {
+            details += (details.isEmpty ? "" : "\n") + "Page: \(page)"
+        }
+
+        switch kind {
+        case "resource":
+            // A file that didn't load. Trackers the app blocks are expected to fail, so they're only noted.
+            if let url = URL(string: report["url"] as? String ?? ""), let host = url.host,
+               let rule = blockList.coveringEntry(for: host) {
+                DebugLog.shared.info("Blocked", "\(message) (on the tracker list as \(rule))", details: details)
+            } else {
+                DebugLog.shared.warning("Page", message, details: details)
+            }
+        case "csp":
+            DebugLog.shared.warning("Page", message, details: details)
+        default:
+            DebugLog.shared.error("Page", message, details: details)
+        }
+    }
+}
+
 // MARK: - WKScriptMessageHandler
 
 extension WebViewController: WKScriptMessageHandler {
@@ -747,6 +816,10 @@ extension WebViewController: WKScriptMessageHandler {
 
         if message.name == PageScripts.networkMessage {
             networkLog.recordBatch(message.body)
+            return
+        }
+        if message.name == PageScripts.pageErrorMessage {
+            logPageError(message.body)
             return
         }
         guard message.name == PageScripts.pageColorsMessage,
@@ -785,6 +858,7 @@ extension WebViewController: WKDownloadDelegate {
     }
 
     func downloadDidFinish(_ download: WKDownload) {
+        DebugLog.shared.info("Download", "Downloaded \(downloads[download]?.lastPathComponent ?? "a file")")
         guard let file = downloads.removeValue(forKey: download) else { return }
         // The share sheet offers Save to Files, Save Image, AirDrop and so on.
         share(file)
@@ -792,6 +866,7 @@ extension WebViewController: WKDownloadDelegate {
 
     func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
         downloads.removeValue(forKey: download)
+        DebugLog.shared.error("Download", "Download failed: \(error.localizedDescription)")
         showAlert(title: "Download failed", message: error.localizedDescription)
     }
 }

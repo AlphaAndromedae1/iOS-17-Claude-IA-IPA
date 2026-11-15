@@ -18,30 +18,65 @@ downloads every script, parses it with a JavaScript parser (Acorn), rewrites it,
 through the native bridge and evaluates it again. That is needed on iOS 15. On iOS 17 it is
 pure overhead and pushes the web process past its memory limit.
 
-The WebKit in **iOS 16.4 and later runs claude.ai without changes**. This app loads the site as is.
-It adds two small read-only scripts, one to match the status-bar colour to the page and one to list
-contacted servers for the Privacy Report, and it blocks known trackers.
+The WebKit in **iOS 16.4 and later runs claude.ai without changes**, with one exception, covered
+below. This app loads the site as is. It doesn't transpile or re-run claude.ai's JavaScript. What it
+adds is small: a fix for an iOS 17.3 crash, read-only scripts for the status-bar colour, the Privacy
+Report and the debug log, and tracker blocking.
+
+### The iOS 17.3 crash fix
+
+Recently, claude.ai started crashing on iOS 17.3, in Safari too, with
+"The web process stopped" / "Claude keeps stopping". The crash report showed it happening inside
+WebKit (`WebCore::RenderThemeIOS::systemColor`) while reading one of claude.ai's style sheets. The
+trigger is CSS **relative colour syntax** such as `rgb(from red r g b)` in an `@supports` test,
+the kind of rule recent versions of Tailwind CSS emit.
+
+Before WebKit reads one of claude.ai's own style sheets, the app takes it over and downloads it. If
+the file contains relative colours, the app renames each one to an unknown function. WebKit ignores
+unknown functions instead of crashing, the same way it treats any CSS feature it doesn't support.
+The corrected CSS is then added to the page in the original's place. Files without relative colours
+load exactly as before. Settings → Debug Log lists each file that was fixed.
 
 ## Features
 
 - Stays signed in (persistent cookies and storage, like Safari).
 - Reopens the chat or project you were last in.
-- Tries to recover on its own when iOS closes the page for memory. If that keeps happening, it shows
-  a screen with Reload and Options instead of looping.
+- Works around the iOS 17.3 WebKit crash on claude.ai's current style sheets (see above).
+- Tries to recover on its own when iOS closes the page. If that keeps happening, it shows why
+  (crash or memory limit) instead of looping.
 - Sign-in pop-ups (Google, Apple) open in a sheet and return to the app when finished.
 - Links to other sites open in an in-app Safari sheet; `mailto:`, `tel:` and similar links open the right app.
 - File, photo and camera uploads; microphone for dictation and voice mode.
 - Downloads (artifacts, exported files) open the share sheet, so you can use Save to Files and similar.
 - Swipe from the edge to go back and forward.
 - Blocks known tracking, analytics and advertising services, and includes a Privacy Report (see below).
-- **Shake the phone** to open the menu:
-  - Reload
-  - New Chat
-  - Open Copied Link
-  - Open in Safari
-  - Privacy Report
-  - Clear Cache
-  - Sign Out and Reset
+- **Shake the phone** to open the menu: Reload, New Chat, Open Copied Link, Open in Safari, and
+  **Settings & Debug Log**.
+
+## Settings & Debug Log
+
+Shake the phone and choose **Settings & Debug Log**, or tap the button on the error screen.
+
+- **Claude Web:** app version, device, iOS version, and whether the add-ons are on.
+- **Debug Log:** what happened, newest first, with a *Problems* filter. Tap an entry for its full
+  details; *Share* sends the whole log as text. It records:
+  - page loads, load errors (error domain, code and address), HTTP errors, Cloudflare checks
+  - the web page crashing or hitting the memory limit, with WebKit's reason code
+  - JavaScript errors and unhandled promise rejections from claude.ai, with stack traces
+  - files that failed to load, and requests refused by the page's Content Security Policy
+  - style sheets the iOS 17 fix corrected, or couldn't
+  - downloads, pop-up windows and low-memory warnings
+
+  The log stays on the phone, in the app's Caches folder, and keeps the last 500 entries, so it survives
+  closing the app. Page addresses are logged without their query strings. Nothing from your
+  conversations is recorded.
+- **Copy Diagnostics:** a short summary, plus the latest problems from the log, to paste into a chat.
+- **Load a Test Page** / **Reload Without Add-ons:** see Troubleshooting below.
+- **Privacy Report:** see Privacy below.
+- **Clear Cache** (keeps you signed in) and **Sign Out and Reset**.
+
+The iOS Settings app can only show fixed preferences, not a live log, so these settings live inside
+the app.
 
 ## Privacy
 
@@ -73,7 +108,7 @@ claude.ai may rely on them:
 
 ### Privacy Report
 
-Shake the phone and choose **Privacy Report** to see:
+Open **Settings & Debug Log → Privacy Report** to see:
 
 - **Blocked This Session:** requests the block list stopped.
 - **Other Companies:** every non-Anthropic server the page contacted, with request counts and types
@@ -164,10 +199,13 @@ The IPA is written to `build/ClaudeWeb.ipa`. To work in Xcode instead, run `xcod
 | `ClaudeWeb/WebViewController.swift` | Main screen: web view setup, crash recovery, downloads, shake menu |
 | `ClaudeWeb/PopupViewController.swift` | Windows the page opens itself (sign-in pop-ups) |
 | `ClaudeWeb/LinkRouter.swift` | Which URLs stay in the app, open in Safari, or open another app |
-| `ClaudeWeb/PageScripts.swift` | The two read-only scripts added to the page (status-bar colour, server list) |
+| `ClaudeWeb/PageScripts.swift` | Scripts added to the page: iOS 17.3 style fix, status-bar colour, server list, error reporter |
 | `ClaudeWeb/TrackerBlocker.swift` | Default block list, essential hosts, compiling the WebKit content rules |
 | `ClaudeWeb/NetworkLog.swift` | In-memory record of contacted and blocked servers |
 | `ClaudeWeb/NetworkReportViewController.swift` | The Privacy Report screen |
+| `ClaudeWeb/SettingsViewController.swift` | The Settings screen |
+| `ClaudeWeb/DebugLog.swift`, `DebugLogViewController.swift` | The debug log and its screens |
+| `ClaudeWeb/StyleSheetFetcher.swift` | Native half of the iOS 17.3 style fix |
 | `ClaudeWeb/Support.swift` | Colours, Safari user agent, JavaScript alert/confirm/prompt dialogs |
 | `Supporting/Info.plist` | App name, permissions text, orientations |
 | `scripts/make-icon.py` | Regenerates the app icon |
@@ -183,17 +221,18 @@ Safari on the Mac, choose Develop → *your iPhone* → claude.ai.
 ## Troubleshooting
 
 If you see **"Claude keeps stopping"**, the screen shows why iOS stopped the page (a crash or the
-memory limit) along with your device and iOS version. Shake the phone, or tap Options, then choose
-**Troubleshoot…**:
+memory limit) along with your device and iOS version. Open **Settings & Debug Log**, check the Debug
+Log for the details, then try:
 
 1. **Load a Test Page** shows a tiny page the app makes itself, with no network.
    - If it stays up, WebKit works and the problem is specific to claude.ai.
    - If it stops too, WebKit is failing in this app for any page. That usually comes from something
      installed on the phone, such as a jailbreak tweak that loads into apps or web content.
-2. **Reload Without Add-ons** loads claude.ai without the app's two scripts and the tracker block list
-   until the app is next opened. If Claude then works, one of those was the cause.
-3. **Copy Diagnostics** copies your device, iOS version and each time the page stopped (with the
-   reason). There's no chat content in it.
+2. **Reload Without Add-ons** loads claude.ai without anything the app adds, including the iOS 17
+   style fix, until the app is next opened. If Claude then works, one of the app's additions was the
+   cause. If it then crashes, the style fix was doing its job.
+3. **Copy Diagnostics** copies your device, iOS version, each time the page stopped (with the
+   reason) and the latest problems from the debug log. There's no chat content in it.
 
 Also worth checking: does claude.ai open in **Safari** on the same phone? If Safari fails too, the
 problem is the phone, not this app. iOS also records these events under Settings → Privacy & Security →

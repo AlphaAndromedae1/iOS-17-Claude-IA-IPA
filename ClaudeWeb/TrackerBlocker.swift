@@ -169,7 +169,7 @@ final class BlockList {
             if let list {
                 controller.add(list)
             } else if let error {
-                NSLog("[BlockList] could not compile the block list: %@", error.localizedDescription)
+                DebugLog.shared.error("Tracker blocking", "Couldn't install the block list", details: error.localizedDescription)
             }
             completion()
         }
