@@ -126,11 +126,39 @@ final class WebViewController: UIViewController {
                 let controller = self.webView.configuration.userContentController
                 controller.removeAllContentRuleLists()
                 if !self.addOnsDisabled {
-                    if let styleFixRules { controller.add(styleFixRules) }
+                    if let styleFixRules, AppSettings.styleFixEnabled { controller.add(styleFixRules) }
                     if let trackerRules { controller.add(trackerRules) }
                 }
                 completion()
             }
+        }
+    }
+
+    /// Adds the page scripts that Settings > Blocking has switched on. Takes effect on the next page load.
+    private func installUserScripts(on content: WKUserContentController) {
+        content.removeAllUserScripts()
+        guard !addOnsDisabled else { return }
+        func add(_ source: String, _ time: WKUserScriptInjectionTime) {
+            content.addUserScript(WKUserScript(source: source, injectionTime: time, forMainFrameOnly: true))
+        }
+        if AppSettings.styleFixEnabled {
+            // First, so it's watching before the page's first style sheet arrives.
+            add(PageScripts.styleFix, .atDocumentStart)
+        }
+        add(PageScripts.errorReporter, .atDocumentStart)
+        add(PageScripts.networkObserver, .atDocumentStart)
+        if AppSettings.hideAppPrompts {
+            add(PageScripts.appPrompts, .atDocumentEnd)
+        }
+        add(PageScripts.pageColors, .atDocumentEnd)
+    }
+
+    /// After a switch in Settings > Blocking changes: reinstall scripts and rules, then reload.
+    private func applyBlockingSettings() {
+        guard !addOnsDisabled else { return }  // everything comes back when the app is reopened
+        installUserScripts(on: webView.configuration.userContentController)
+        installContentRules { [weak self] in
+            self?.reloadPage()
         }
     }
 
@@ -145,23 +173,12 @@ final class WebViewController: UIViewController {
         configuration.defaultWebpagePreferences.preferredContentMode = .mobile
 
         let content = configuration.userContentController
-        // First, so it's watching before the page's first style sheet arrives.
-        content.addUserScript(WKUserScript(
-            source: PageScripts.styleFix, injectionTime: .atDocumentStart, forMainFrameOnly: true
-        ))
         content.addScriptMessageHandler(styleSheetFetcher, contentWorld: .page, name: PageScripts.styleSheetMessage)
-        content.addUserScript(WKUserScript(
-            source: PageScripts.pageColors, injectionTime: .atDocumentEnd, forMainFrameOnly: true
-        ))
-        content.add(WeakScriptMessageHandler(self), name: PageScripts.pageColorsMessage)
-        content.addUserScript(WKUserScript(
-            source: PageScripts.networkObserver, injectionTime: .atDocumentStart, forMainFrameOnly: true
-        ))
-        content.add(WeakScriptMessageHandler(self), name: PageScripts.networkMessage)
-        content.addUserScript(WKUserScript(
-            source: PageScripts.errorReporter, injectionTime: .atDocumentStart, forMainFrameOnly: true
-        ))
-        content.add(WeakScriptMessageHandler(self), name: PageScripts.pageErrorMessage)
+        for name in [PageScripts.pageColorsMessage, PageScripts.networkMessage,
+                     PageScripts.pageErrorMessage, PageScripts.appPromptMessage] {
+            content.add(WeakScriptMessageHandler(self), name: name)
+        }
+        installUserScripts(on: content)
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = self
@@ -400,6 +417,30 @@ final class WebViewController: UIViewController {
             addOnsEnabled: { [weak self] in !(self?.addOnsDisabled ?? false) },
             diagnostics: { [weak self] in self?.diagnosticsText() ?? "" },
             makePrivacyReport: { [weak self] in self?.makePrivacyReport() ?? UIViewController() },
+            trackerBlocking: .init(
+                isOn: { [weak self] in self?.blockList.isEnabled ?? true },
+                set: { [weak self] on in
+                    self?.blockList.isEnabled = on
+                    DebugLog.shared.info("Settings", "Tracker blocking turned \(on ? "on" : "off")")
+                    self?.applyBlockingSettings()
+                }
+            ),
+            hideAppPrompts: .init(
+                isOn: { AppSettings.hideAppPrompts },
+                set: { [weak self] on in
+                    AppSettings.hideAppPrompts = on
+                    DebugLog.shared.info("Settings", "Hiding app prompts turned \(on ? "on" : "off")")
+                    self?.applyBlockingSettings()
+                }
+            ),
+            styleFix: .init(
+                isOn: { AppSettings.styleFixEnabled },
+                set: { [weak self] on in
+                    AppSettings.styleFixEnabled = on
+                    DebugLog.shared.info("Settings", "iOS 17 style fix turned \(on ? "on" : "off")")
+                    self?.applyBlockingSettings()
+                }
+            ),
             loadTestPage: { [weak self] in self?.loadTestPage() },
             reloadWithoutAddOns: { [weak self] in self?.reloadWithoutAddOns() },
             clearCache: { [weak self] in self?.clearCache() },
@@ -553,7 +594,12 @@ extension WebViewController: WKNavigationDelegate {
             openInSafariSheet(url)
         case .otherApp:
             decisionHandler(.cancel)
-            openInOtherApp(url)
+            if AppSettings.hideAppPrompts && url.scheme?.lowercased() == "claude" {
+                // The official app can't sign in on iOS 17 any more; stay here.
+                DebugLog.shared.info("App prompt", "Stopped claude.ai from opening the Claude app", details: url.absoluteString)
+            } else {
+                openInOtherApp(url)
+            }
         }
     }
 
@@ -746,7 +792,11 @@ extension WebViewController: WKUIDelegate {
             if let url { openInSafariSheet(url) }
             return nil
         case .otherApp:
-            if let url { openInOtherApp(url) }
+            if let url, AppSettings.hideAppPrompts, url.scheme?.lowercased() == "claude" {
+                DebugLog.shared.info("App prompt", "Stopped claude.ai from opening the Claude app", details: url.absoluteString)
+            } else if let url {
+                openInOtherApp(url)
+            }
             return nil
         case .webView:
             DebugLog.shared.info("Window", "Opened a pop-up for \(Self.shortAddress(url))")
@@ -842,6 +892,13 @@ extension WebViewController: WKScriptMessageHandler {
         }
         if message.name == PageScripts.pageErrorMessage {
             logPageError(message.body)
+            return
+        }
+        if message.name == PageScripts.appPromptMessage, let report = message.body as? [String: Any] {
+            DebugLog.shared.info(
+                "App prompt", "Dismissed a “get the app” prompt",
+                details: "It said: \(report["text"] as? String ?? "")\nHow: \(report["how"] as? String ?? "")"
+            )
             return
         }
         guard message.name == PageScripts.pageColorsMessage,

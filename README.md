@@ -56,6 +56,8 @@ Blocking the download avoids that race.)
 - Downloads (artifacts, exported files) open the share sheet, so you can use Save to Files and similar.
 - Swipe from the edge to go back and forward.
 - Blocks known tracking, analytics and advertising services, and includes a Privacy Report (see below).
+- Dismisses claude.ai's "get the Claude app" prompts, and keeps links that would open the Claude app
+  inside this app instead.
 - **Shake the phone** to open the menu: Reload, New Chat, Open Copied Link, Open in Safari, and
   **Settings & Debug Log**.
 
@@ -64,6 +66,8 @@ Blocking the download avoids that race.)
 Shake the phone and choose **Settings & Debug Log**, or tap the button on the error screen.
 
 - **Claude Web:** app version, device, iOS version, and whether the add-ons are on.
+- **Blocking:** switches for *Block Trackers*, *Hide "Get the App" Prompts* and the *iOS 17 Style Fix*,
+  plus *Privacy Report & Block List* for editing the blocked addresses. Each switch reloads the page.
 - **Debug Log:** what happened, newest first, with a *Problems* filter. Tap an entry for its full
   details; *Share* sends the whole log as text. It records:
   - page loads, load errors (error domain, code and address), HTTP errors, Cloudflare checks
@@ -78,11 +82,26 @@ Shake the phone and choose **Settings & Debug Log**, or tap the button on the er
   conversations is recorded.
 - **Copy Diagnostics:** a short summary, plus the latest problems from the log, to paste into a chat.
 - **Load a Test Page** / **Reload Without Add-ons:** see Troubleshooting below.
-- **Privacy Report:** see Privacy below.
 - **Clear Cache** (keeps you signed in) and **Sign Out and Reset**.
 
 The iOS Settings app can only show fixed preferences, not a live log, so these settings live inside
 the app.
+
+### "Get the app" prompts
+
+claude.ai's code isn't something this app can see ahead of time, so prompts are recognised by what
+they say and where they sit, not by class names. To be dismissed, an element must:
+
+- float over the page (a dialog, or a fixed or sticky banner or sheet)
+- mention the app ("Get the app", "Claude app", "App Store", "Claude for iOS"), or link to the App Store
+  or a `claude://` address
+- be small: short text, at most six buttons or links, and no message box, navigation or conversation
+
+Those rules keep it away from chats and the sidebar. It taps the prompt's own *Not now* or close
+button where there is one, so claude.ai remembers the choice. Otherwise it presses Escape on a dialog,
+and only as a last resort hides the prompt. Every dismissal is listed in the Debug Log under
+*App prompt*. If one still shows, or the wrong thing disappears, turn the switch off and send a
+screenshot.
 
 ## Privacy
 
@@ -114,7 +133,7 @@ claude.ai may rely on them:
 
 ### Privacy Report
 
-Open **Settings & Debug Log → Privacy Report** to see:
+Open **Settings & Debug Log → Privacy Report & Block List** to see:
 
 - **Blocked This Session:** requests the block list stopped.
 - **Other Companies:** every non-Anthropic server the page contacted, with request counts and types

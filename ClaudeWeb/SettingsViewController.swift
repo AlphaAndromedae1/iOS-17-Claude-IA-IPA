@@ -5,10 +5,18 @@ import UIKit
 final class SettingsViewController: UITableViewController {
 
     /// What the screen asks the main screen to do. Actions that change the page close Settings first.
+    struct Toggle {
+        var isOn: () -> Bool
+        var set: (Bool) -> Void
+    }
+
     struct Actions {
         var addOnsEnabled: () -> Bool
         var diagnostics: () -> String
         var makePrivacyReport: () -> UIViewController
+        var trackerBlocking: Toggle
+        var hideAppPrompts: Toggle
+        var styleFix: Toggle
         var loadTestPage: () -> Void
         var reloadWithoutAddOns: () -> Void
         var clearCache: () -> Void
@@ -17,6 +25,7 @@ final class SettingsViewController: UITableViewController {
 
     private enum Row {
         case info(title: String, value: () -> String)
+        case toggle(title: String, toggle: Toggle)
         case debugLog, copyDiagnostics, loadTestPage, reloadWithoutAddOns
         case privacyReport
         case clearCache, signOutAndReset
@@ -39,12 +48,24 @@ final class SettingsViewController: UITableViewController {
             }),
         ]),
         Section(
+            title: "Blocking",
+            footer: "Trackers: known analytics and advertising services; Privacy Report shows what was blocked and "
+                + "lets you edit the list. App prompts: claude.ai's \"get the Claude app\" banners and pop-ups are "
+                + "dismissed, and links that would open the Claude app stay here. iOS 17 style fix: keeps claude.ai "
+                + "from crashing WebKit on iOS 17.3; turn it off only to test. Changes reload the page.",
+            rows: [
+                .toggle(title: "Block Trackers", toggle: actions.trackerBlocking),
+                .toggle(title: "Hide “Get the App” Prompts", toggle: actions.hideAppPrompts),
+                .toggle(title: "iOS 17 Style Fix", toggle: actions.styleFix),
+                .privacyReport,
+            ]
+        ),
+        Section(
             title: "Debugging",
             footer: "The debug log records page loads, load errors, the page crashing and why, JavaScript errors "
                 + "from claude.ai and what the iOS 17 style fix did. It stays on this phone.",
             rows: [.debugLog, .copyDiagnostics, .loadTestPage, .reloadWithoutAddOns]
         ),
-        Section(title: "Privacy", footer: nil, rows: [.privacyReport]),
         Section(
             title: "Website Data",
             footer: "Clear Cache keeps you signed in. Sign Out and Reset deletes everything claude.ai stored in this app.",
@@ -117,6 +138,16 @@ final class SettingsViewController: UITableViewController {
             content.text = title
             content.secondaryText = value()
             cell.selectionStyle = .none
+        case let .toggle(title, toggle):
+            content.text = title
+            let control = UISwitch()
+            control.isOn = toggle.isOn()
+            control.addAction(UIAction { action in
+                guard let control = action.sender as? UISwitch else { return }
+                toggle.set(control.isOn)
+            }, for: .valueChanged)
+            cell.accessoryView = control
+            cell.selectionStyle = .none
         case .debugLog:
             content.text = "Debug Log"
             let problems = DebugLog.shared.problemCount
@@ -133,7 +164,7 @@ final class SettingsViewController: UITableViewController {
             content.text = "Reload Without Add-ons"
             content.textProperties.color = .accent
         case .privacyReport:
-            content.text = "Privacy Report"
+            content.text = "Privacy Report & Block List"
             cell.accessoryType = .disclosureIndicator
         case .clearCache:
             content.text = "Clear Cache"
@@ -151,7 +182,7 @@ final class SettingsViewController: UITableViewController {
         tableView.deselectRow(at: indexPath, animated: true)
 
         switch sections[indexPath.section].rows[indexPath.row] {
-        case .info:
+        case .info, .toggle:
             break
         case .debugLog:
             navigationController?.pushViewController(DebugLogViewController(), animated: true)
