@@ -142,8 +142,16 @@ final class WebViewController: UIViewController {
             content.addUserScript(WKUserScript(source: source, injectionTime: time, forMainFrameOnly: true))
         }
         if AppSettings.styleFixEnabled {
-            // First, so it's watching before the page's first style sheet arrives.
-            add(PageScripts.styleFix, .atDocumentStart)
+            if let styleFix = PageScripts.styleFix {
+                // First, so it's watching before the page's first style sheet arrives.
+                add(styleFix, .atDocumentStart)
+            } else {
+                DebugLog.shared.error(
+                    "Style fix", "style-fix.js is missing from the app",
+                    details: "Without it, claude.ai's style sheets are blocked but never put back, so pages "
+                        + "will look unstyled. The build should have copied Shared/style-fix.js into the app."
+                )
+            }
         }
         add(PageScripts.errorReporter, .atDocumentStart)
         add(PageScripts.networkObserver, .atDocumentStart)

@@ -2,7 +2,7 @@ import Foundation
 import WebKit
 
 /// The rules half of the iOS 17.3 style fix: WebKit isn't allowed to load style sheets from Claude's
-/// own servers itself, so it never parses the originals that crash it. `PageScripts.styleFix` loads
+/// own servers itself, so it never parses the originals that crash it. `Shared/style-fix.js` loads
 /// each of them instead and adds a corrected copy to the page. A content rule list is checked
 /// before a request is even made, so unlike changing the `<link>` from a script there's no race
 /// with the download.
@@ -10,7 +10,7 @@ enum StyleFixRules {
 
     static let identifier = "ClaudeWebStyleFix"
 
-    /// Keep in step with `OWN_HOST` in `PageScripts.styleFix`.
+    /// Keep in step with `OWN_HOST` in `Shared/style-fix.js` and `SafariExtension/Resources/rules.json`.
     static let hosts = ["claude.ai", "claude.com", "anthropic.com"]
 
     @MainActor
@@ -41,7 +41,7 @@ enum StyleFixRules {
     }
 }
 
-/// The native half of `PageScripts.styleFix`.
+/// The native half of `Shared/style-fix.js` in the app.
 ///
 /// The page script downloads claude.ai's style sheets itself, but browsers only let a page read a
 /// file from another server if that server allows it (CORS). When it doesn't, the script asks the

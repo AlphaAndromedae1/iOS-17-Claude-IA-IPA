@@ -28,6 +28,7 @@ final class SettingsViewController: UITableViewController {
         case toggle(title: String, toggle: Toggle)
         case debugLog, copyDiagnostics, loadTestPage, reloadWithoutAddOns
         case privacyReport
+        case safariFix
         case clearCache, signOutAndReset
     }
 
@@ -59,6 +60,12 @@ final class SettingsViewController: UITableViewController {
                 .toggle(title: "iOS 17 Style Fix", toggle: actions.styleFix),
                 .privacyReport,
             ]
+        ),
+        Section(
+            title: "Safari",
+            footer: "Claude Web includes a Safari extension with the same iOS 17.3 fix, so claude.ai stops "
+                + "crashing in Safari too.",
+            rows: [.safariFix]
         ),
         Section(
             title: "Debugging",
@@ -166,6 +173,9 @@ final class SettingsViewController: UITableViewController {
         case .privacyReport:
             content.text = "Privacy Report & Block List"
             cell.accessoryType = .disclosureIndicator
+        case .safariFix:
+            content.text = "Fix Claude in Safari Too"
+            content.textProperties.color = .accent
         case .clearCache:
             content.text = "Clear Cache"
             content.textProperties.color = .accent
@@ -199,6 +209,17 @@ final class SettingsViewController: UITableViewController {
             closeThen(actions.reloadWithoutAddOns)
         case .privacyReport:
             navigationController?.pushViewController(actions.makePrivacyReport(), animated: true)
+        case .safariFix:
+            showAlert(
+                title: "Fix Claude in Safari",
+                message: "1. Open the Settings app, then Safari > Extensions.\n"
+                    + "2. Tap Claude iOS 17 Fix and switch it on.\n"
+                    + "3. Set claude.ai and anthropic.com to Allow, or set All Websites to Allow. The extension "
+                    + "can only reach Claude's own sites.\n"
+                    + "4. Reload claude.ai in Safari.\n\n"
+                    + "If claude.ai looks unstyled in Safari, the extension is on but not allowed on those "
+                    + "sites: allow them, or switch the extension off."
+            )
         case .clearCache:
             closeThen(actions.clearCache)
         case .signOutAndReset:

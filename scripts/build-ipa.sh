@@ -51,6 +51,21 @@ if ! /usr/libexec/PlistBuddy -c "Print :CFBundleIcons:CFBundlePrimaryIcon:CFBund
     echo "The app icon is missing from Info.plist" >&2
     exit 1
 fi
+if [ ! -f "$APP/style-fix.js" ]; then
+    echo "style-fix.js is missing from the app: claude.ai would load unstyled" >&2
+    exit 1
+fi
+
+# The Safari extension, embedded in the app.
+APPEX="$APP/PlugIns/ClaudeWebSafariFix.appex"
+for file in Info.plist ClaudeWebSafariFix manifest.json rules.json host.js style-fix.js background.js icon-128.png; do
+    if [ ! -f "$APPEX/$file" ]; then
+        echo "The Safari extension is missing $file (looked in $APPEX)" >&2
+        exit 1
+    fi
+done
+printf '   %-27s %s\n' "Safari extension" \
+    "$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$APPEX/Info.plist"), $(lipo -archs "$APPEX/ClaudeWebSafariFix")"
 
 echo ">> Packaging IPA"
 mkdir -p "$BUILD/ipa/Payload"

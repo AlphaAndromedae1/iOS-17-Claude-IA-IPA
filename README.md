@@ -67,6 +67,28 @@ Blocking the download avoids that race.)
 - **Shake the phone** to open the menu: Reload, New Chat, Open Copied Link, Open in Safari, and
   **Settings & Debug Log**.
 
+## Fixing Safari too
+
+The app includes a **Safari Web Extension** ("Claude iOS 17 Fix") with the same iOS 17.3 fix, so
+claude.ai stops crashing in Safari as well. It uses Apple's standard extension system, so it works
+without a jailbreak. After installing the app:
+
+1. Open the Settings app, then **Safari → Extensions → Claude iOS 17 Fix**, and switch it on.
+2. Set **claude.ai** and **anthropic.com** to *Allow*, or set *All Websites* to *Allow*. The extension
+   only asks for access to Claude's own sites (claude.ai, claude.com, anthropic.com), so that's all it
+   can reach.
+3. Reload claude.ai in Safari.
+
+It works like the app's fix. A blocking rule (`SafariExtension/Resources/rules.json`) stops Safari
+from loading style sheets from Claude's servers, and a content script loads, corrects and inserts
+them. If the extension is switched on but not allowed on those sites, the blocking rule still
+applies while the script doesn't run, so claude.ai looks unstyled in Safari. Allow the sites, or
+switch the extension off. Corrections show in Web Inspector's console as `[Claude iOS 17 Fix]`.
+
+Both the app and the extension run the same file, `Shared/style-fix.js`. Each connects it to its own
+download fallback and reporting: `PageScripts.styleFixHost` in the app, and
+`SafariExtension/Resources/host.js` in the extension.
+
 ## Settings & Debug Log
 
 Shake the phone and choose **Settings & Debug Log**, or tap the button on the error screen.
@@ -230,13 +252,15 @@ The IPA is written to `build/ClaudeWeb.ipa`. To work in Xcode instead, run `xcod
 | `ClaudeWeb/WebViewController.swift` | Main screen: web view setup, crash recovery, downloads, shake menu |
 | `ClaudeWeb/PopupViewController.swift` | Windows the page opens itself (sign-in pop-ups) |
 | `ClaudeWeb/LinkRouter.swift` | Which URLs stay in the app, open in Safari, or open another app |
-| `ClaudeWeb/PageScripts.swift` | Scripts added to the page: iOS 17.3 style fix, status-bar colour, server list, error reporter |
+| `ClaudeWeb/PageScripts.swift` | Scripts added to the page: style fix host, status-bar colour, server list, error reporter, app prompts |
 | `ClaudeWeb/TrackerBlocker.swift` | Default block list, essential hosts, compiling the WebKit content rules |
 | `ClaudeWeb/NetworkLog.swift` | In-memory record of contacted and blocked servers |
 | `ClaudeWeb/NetworkReportViewController.swift` | The Privacy Report screen |
 | `ClaudeWeb/SettingsViewController.swift` | The Settings screen |
 | `ClaudeWeb/DebugLog.swift`, `DebugLogViewController.swift` | The debug log and its screens |
 | `ClaudeWeb/StyleSheetFetcher.swift` | Native half of the iOS 17.3 style fix |
+| `Shared/style-fix.js` | The iOS 17.3 style fix itself, used by the app and the Safari extension |
+| `SafariExtension/` | The Safari extension: manifest, blocking rules, host and background scripts |
 | `ClaudeWeb/Support.swift` | Colours, Safari user agent, JavaScript alert/confirm/prompt dialogs |
 | `Supporting/Info.plist` | App name, permissions text, orientations |
 | `scripts/make-icon.py` | Regenerates the app icon |

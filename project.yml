@@ -10,8 +10,8 @@ options:
 
 settings:
   base:
-    MARKETING_VERSION: "1.4.1"
-    CURRENT_PROJECT_VERSION: "7"
+    MARKETING_VERSION: "1.5.0"
+    CURRENT_PROJECT_VERSION: "8"
     SWIFT_VERSION: "5.0"
 
 targets:
@@ -20,6 +20,12 @@ targets:
     platform: iOS
     sources:
       - path: ClaudeWeb
+      # The iOS 17.3 style fix, shared with the Safari extension.
+      - path: Shared/style-fix.js
+        buildPhase: resources
+    dependencies:
+      # Embedded in the app's PlugIns folder; switched on in Settings > Safari > Extensions.
+      - target: ClaudeWebSafariFix
     settings:
       base:
         PRODUCT_NAME: ClaudeWeb
@@ -31,3 +37,25 @@ targets:
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         CODE_SIGN_STYLE: Automatic
     scheme: {}
+
+  # Safari Web Extension that applies the same iOS 17.3 style fix to claude.ai in Safari.
+  ClaudeWebSafariFix:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: SafariExtension/SafariWebExtensionHandler.swift
+      - path: SafariExtension/Resources
+        buildPhase: resources
+      - path: Shared/style-fix.js
+        buildPhase: resources
+    settings:
+      base:
+        PRODUCT_NAME: ClaudeWebSafariFix
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.alphaandromedae1.claudeweb.safarifix
+        INFOPLIST_FILE: Supporting/SafariExtension-Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        TARGETED_DEVICE_FAMILY: "1,2"
+        CODE_SIGN_STYLE: Automatic
+        # Safari reads the extension's icons as ordinary PNG files; keep Xcode from re-encoding them.
+        COMPRESS_PNG_FILES: NO
+        STRIP_PNG_TEXT: NO
