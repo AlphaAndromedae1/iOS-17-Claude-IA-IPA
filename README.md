@@ -79,6 +79,15 @@ without a jailbreak. After installing the app:
    can reach.
 3. Reload claude.ai in Safari.
 
+**Installed with TrollStore Lite?** Use **`ClaudeWeb-TrollStore.ipa`**. TrollStore signs apps
+without an Apple developer identity, and Safari seems to ignore extensions that don't have one, so
+with the normal IPA the extension never appears. The TrollStore IPA is pre-signed with entitlements
+that state a developer identity, which TrollStore keeps. This is experimental: if Safari checks the
+signing certificate instead, only an install signed with an Apple ID (Sideloadly, AltStore) will
+show the extension. If it doesn't appear after installing, run
+`uicache -p "$(find /var/containers/Bundle/Application -maxdepth 2 -name ClaudeWeb.app | head -1)"`
+as root, then reopen Settings.
+
 It works like the app's fix. A blocking rule (`SafariExtension/Resources/rules.json`) stops Safari
 from loading style sheets from Claude's servers, and a content script loads, corrects and inserts
 them. If the extension is switched on but not allowed on those sites, the blocking rule still
