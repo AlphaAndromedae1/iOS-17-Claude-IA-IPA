@@ -10,7 +10,7 @@ enum StyleFixRules {
 
     static let identifier = "ClaudeWebStyleFix"
 
-    /// Keep in step with `OWN_HOST` in `Shared/style-fix.js` and `SafariExtension/Resources/rules.json`.
+    /// Keep in step with `OWN_HOST` in `Shared/style-fix.js`.
     static let hosts = ["claude.ai", "claude.com", "anthropic.com"]
 
     @MainActor

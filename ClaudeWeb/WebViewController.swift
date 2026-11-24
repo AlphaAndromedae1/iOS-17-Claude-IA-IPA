@@ -155,9 +155,6 @@ final class WebViewController: UIViewController {
         }
         add(PageScripts.errorReporter, .atDocumentStart)
         add(PageScripts.networkObserver, .atDocumentStart)
-        if AppSettings.hideAppPrompts {
-            add(PageScripts.appPrompts, .atDocumentEnd)
-        }
         add(PageScripts.pageColors, .atDocumentEnd)
     }
 
@@ -183,7 +180,7 @@ final class WebViewController: UIViewController {
         let content = configuration.userContentController
         content.addScriptMessageHandler(styleSheetFetcher, contentWorld: .page, name: PageScripts.styleSheetMessage)
         for name in [PageScripts.pageColorsMessage, PageScripts.networkMessage,
-                     PageScripts.pageErrorMessage, PageScripts.appPromptMessage] {
+                     PageScripts.pageErrorMessage] {
             content.add(WeakScriptMessageHandler(self), name: name)
         }
         installUserScripts(on: content)
@@ -433,14 +430,6 @@ final class WebViewController: UIViewController {
                     self?.applyBlockingSettings()
                 }
             ),
-            hideAppPrompts: .init(
-                isOn: { AppSettings.hideAppPrompts },
-                set: { [weak self] on in
-                    AppSettings.hideAppPrompts = on
-                    DebugLog.shared.info("Settings", "Hiding app prompts turned \(on ? "on" : "off")")
-                    self?.applyBlockingSettings()
-                }
-            ),
             styleFix: .init(
                 isOn: { AppSettings.styleFixEnabled },
                 set: { [weak self] on in
@@ -602,12 +591,7 @@ extension WebViewController: WKNavigationDelegate {
             openInSafariSheet(url)
         case .otherApp:
             decisionHandler(.cancel)
-            if AppSettings.hideAppPrompts && url.scheme?.lowercased() == "claude" {
-                // The official app can't sign in on iOS 17 any more; stay here.
-                DebugLog.shared.info("App prompt", "Stopped claude.ai from opening the Claude app", details: url.absoluteString)
-            } else {
-                openInOtherApp(url)
-            }
+            openInOtherApp(url)
         }
     }
 
@@ -800,11 +784,7 @@ extension WebViewController: WKUIDelegate {
             if let url { openInSafariSheet(url) }
             return nil
         case .otherApp:
-            if let url, AppSettings.hideAppPrompts, url.scheme?.lowercased() == "claude" {
-                DebugLog.shared.info("App prompt", "Stopped claude.ai from opening the Claude app", details: url.absoluteString)
-            } else if let url {
-                openInOtherApp(url)
-            }
+            if let url { openInOtherApp(url) }
             return nil
         case .webView:
             DebugLog.shared.info("Window", "Opened a pop-up for \(Self.shortAddress(url))")
@@ -900,13 +880,6 @@ extension WebViewController: WKScriptMessageHandler {
         }
         if message.name == PageScripts.pageErrorMessage {
             logPageError(message.body)
-            return
-        }
-        if message.name == PageScripts.appPromptMessage, let report = message.body as? [String: Any] {
-            DebugLog.shared.info(
-                "App prompt", "Dismissed a “get the app” prompt",
-                details: "It said: \(report["text"] as? String ?? "")\nHow: \(report["how"] as? String ?? "")"
-            )
             return
         }
         guard message.name == PageScripts.pageColorsMessage,

@@ -36,7 +36,8 @@ mechanism Safari content blockers use), so WebKit never reads the originals. Ins
 each of those files itself and renames every relative colour to an unknown function. WebKit ignores
 unknown functions instead of crashing, the same way it treats any CSS feature it doesn't support.
 The corrected CSS is then added to the page right where the original `<link>` was. Files without
-relative colours are added unchanged. Settings → Debug Log lists every file that went through the
+relative colours are added unchanged. Style sheets the page preloads (`<link rel="preload" as="style">`) are
+blocked and answered the same way, so nothing waiting on them gets stuck. Settings → Debug Log lists every file that went through the
 fix, and whether anything was changed.
 
 A second iOS 17.3 crash comes from CSS `:has()` selectors that test an attribute, such as
@@ -62,49 +63,16 @@ Blocking the download avoids that race.)
 - Downloads (artifacts, exported files) open the share sheet, so you can use Save to Files and similar.
 - Swipe from the edge to go back and forward.
 - Blocks known tracking, analytics and advertising services, and includes a Privacy Report (see below).
-- Dismisses claude.ai's "get the Claude app" prompts, and keeps links that would open the Claude app
-  inside this app instead.
 - **Shake the phone** to open the menu: Reload, New Chat, Open Copied Link, Open in Safari, and
   **Settings & Debug Log**.
-
-## Fixing Safari too
-
-The app includes a **Safari Web Extension** ("Claude iOS 17 Fix") with the same iOS 17.3 fix, so
-claude.ai stops crashing in Safari as well. It uses Apple's standard extension system, so it works
-without a jailbreak. After installing the app:
-
-1. Open the Settings app, then **Safari → Extensions → Claude iOS 17 Fix**, and switch it on.
-2. Set **claude.ai** and **anthropic.com** to *Allow*, or set *All Websites* to *Allow*. The extension
-   only asks for access to Claude's own sites (claude.ai, claude.com, anthropic.com), so that's all it
-   can reach.
-3. Reload claude.ai in Safari.
-
-**Installed with TrollStore Lite?** Use **`ClaudeWeb-TrollStore.ipa`**. TrollStore signs apps
-without an Apple developer identity, and Safari seems to ignore extensions that don't have one, so
-with the normal IPA the extension never appears. The TrollStore IPA is pre-signed with entitlements
-that state a developer identity, which TrollStore keeps. This is experimental: if Safari checks the
-signing certificate instead, only an install signed with an Apple ID (Sideloadly, AltStore) will
-show the extension. If it doesn't appear after installing, run
-`uicache -p "$(find /var/containers/Bundle/Application -maxdepth 2 -name ClaudeWeb.app | head -1)"`
-as root, then reopen Settings.
-
-It works like the app's fix. A blocking rule (`SafariExtension/Resources/rules.json`) stops Safari
-from loading style sheets from Claude's servers, and a content script loads, corrects and inserts
-them. If the extension is switched on but not allowed on those sites, the blocking rule still
-applies while the script doesn't run, so claude.ai looks unstyled in Safari. Allow the sites, or
-switch the extension off. Corrections show in Web Inspector's console as `[Claude iOS 17 Fix]`.
-
-Both the app and the extension run the same file, `Shared/style-fix.js`. Each connects it to its own
-download fallback and reporting: `PageScripts.styleFixHost` in the app, and
-`SafariExtension/Resources/host.js` in the extension.
 
 ## Settings & Debug Log
 
 Shake the phone and choose **Settings & Debug Log**, or tap the button on the error screen.
 
 - **Claude Web:** app version, device, iOS version, and whether the add-ons are on.
-- **Blocking:** switches for *Block Trackers*, *Hide "Get the App" Prompts* and the *iOS 17 Style Fix*,
-  plus *Privacy Report & Block List* for editing the blocked addresses. Each switch reloads the page.
+- **Blocking:** switches for *Block Trackers* and the *iOS 17 Style Fix*, plus *Privacy Report & Block
+  List* for editing the blocked addresses. Each switch reloads the page.
 - **Debug Log:** what happened, newest first, with a *Problems* filter. Tap an entry for its full
   details; *Share* sends the whole log as text. It records:
   - page loads, load errors (error domain, code and address), HTTP errors, Cloudflare checks
@@ -123,22 +91,6 @@ Shake the phone and choose **Settings & Debug Log**, or tap the button on the er
 
 The iOS Settings app can only show fixed preferences, not a live log, so these settings live inside
 the app.
-
-### "Get the app" prompts
-
-claude.ai's code isn't something this app can see ahead of time, so prompts are recognised by what
-they say and where they sit, not by class names. To be dismissed, an element must:
-
-- float over the page (a dialog, or a fixed or sticky banner or sheet)
-- mention the app ("Get the app", "Claude app", "App Store", "Claude for iOS"), or link to the App Store
-  or a `claude://` address
-- be small: short text, at most six buttons or links, and no message box, navigation or conversation
-
-Those rules keep it away from chats and the sidebar. It taps the prompt's own *Not now* or close
-button where there is one, so claude.ai remembers the choice. Otherwise it presses Escape on a dialog,
-and only as a last resort hides the prompt. Every dismissal is listed in the Debug Log under
-*App prompt*. If one still shows, or the wrong thing disappears, turn the switch off and send a
-screenshot.
 
 ## Privacy
 
@@ -194,8 +146,8 @@ Limits:
 
 ## Installing on your iPhone
 
-TrollStore does **not** support iOS 17.3.1, so you need a sideloading tool that signs the app with
-your Apple ID:
+On a jailbroken phone, **TrollStore Lite** installs the IPA directly. Regular TrollStore doesn't
+support iOS 17.3.1. Otherwise, use a sideloading tool that signs the app with your Apple ID:
 
 1. Get `ClaudeWeb.ipa`:
    - **Releases** page (when a version tag has been pushed), or
@@ -261,15 +213,14 @@ The IPA is written to `build/ClaudeWeb.ipa`. To work in Xcode instead, run `xcod
 | `ClaudeWeb/WebViewController.swift` | Main screen: web view setup, crash recovery, downloads, shake menu |
 | `ClaudeWeb/PopupViewController.swift` | Windows the page opens itself (sign-in pop-ups) |
 | `ClaudeWeb/LinkRouter.swift` | Which URLs stay in the app, open in Safari, or open another app |
-| `ClaudeWeb/PageScripts.swift` | Scripts added to the page: style fix host, status-bar colour, server list, error reporter, app prompts |
+| `ClaudeWeb/PageScripts.swift` | Scripts added to the page: style fix host, status-bar colour, server list, error reporter |
 | `ClaudeWeb/TrackerBlocker.swift` | Default block list, essential hosts, compiling the WebKit content rules |
 | `ClaudeWeb/NetworkLog.swift` | In-memory record of contacted and blocked servers |
 | `ClaudeWeb/NetworkReportViewController.swift` | The Privacy Report screen |
 | `ClaudeWeb/SettingsViewController.swift` | The Settings screen |
 | `ClaudeWeb/DebugLog.swift`, `DebugLogViewController.swift` | The debug log and its screens |
 | `ClaudeWeb/StyleSheetFetcher.swift` | Native half of the iOS 17.3 style fix |
-| `Shared/style-fix.js` | The iOS 17.3 style fix itself, used by the app and the Safari extension |
-| `SafariExtension/` | The Safari extension: manifest, blocking rules, host and background scripts |
+| `Shared/style-fix.js` | The iOS 17.3 style fix itself, loaded into the page by the app |
 | `ClaudeWeb/Support.swift` | Colours, Safari user agent, JavaScript alert/confirm/prompt dialogs |
 | `Supporting/Info.plist` | App name, permissions text, orientations |
 | `scripts/make-icon.py` | Regenerates the app icon |

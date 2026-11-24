@@ -28,28 +28,23 @@ jobs:
       - name: Xcode version
         run: xcodebuild -version
 
-      # ldid signs the TrollStore IPA.
-      - name: Install XcodeGen and ldid
+      - name: Install XcodeGen
         env:
           HOMEBREW_NO_AUTO_UPDATE: "1"
           HOMEBREW_NO_INSTALL_CLEANUP: "1"
-        run: brew install xcodegen ldid
+        run: brew install xcodegen
 
-      - name: Build IPAs
-        run: |
-          ./scripts/build-ipa.sh
-          test -f build/ClaudeWeb-TrollStore.ipa
+      - name: Build unsigned IPA
+        run: ./scripts/build-ipa.sh
 
-      - name: Upload IPAs
+      - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
           name: ClaudeWeb-ipa
-          path: |
-            build/ClaudeWeb.ipa
-            build/ClaudeWeb-TrollStore.ipa
+          path: build/ClaudeWeb.ipa
           if-no-files-found: error
 
-      # Attaches the IPAs to the release for this tag, creating the release if it doesn't exist yet.
+      # Attaches the IPA to the release for this tag, creating the release if it doesn't exist yet.
       - name: Publish release
         if: startsWith(github.ref, 'refs/tags/v')
         env:
@@ -57,10 +52,9 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$TAG" build/ClaudeWeb.ipa build/ClaudeWeb-TrollStore.ipa \
-              --repo "$GITHUB_REPOSITORY" --clobber
+            gh release upload "$TAG" build/ClaudeWeb.ipa --repo "$GITHUB_REPOSITORY" --clobber
           else
-            gh release create "$TAG" build/ClaudeWeb.ipa build/ClaudeWeb-TrollStore.ipa \
+            gh release create "$TAG" build/ClaudeWeb.ipa \
               --repo "$GITHUB_REPOSITORY" \
               --title "Claude Web $TAG" \
               --generate-notes

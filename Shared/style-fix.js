@@ -1,4 +1,4 @@
-// The iOS 17.3 style fix, shared by the Claude Web app and its Safari extension.
+// The iOS 17.3 style fix, loaded into claude.ai by the Claude Web app (see PageScripts.styleFix).
 //
 // WebKit in iOS 17.3 crashes on two things in claude.ai's CSS:
 //  1. Relative colour syntax, such as rgb(from red r g b) in an @supports test
@@ -6,14 +6,14 @@
 //  2. :has() selectors that test an attribute, such as :has([data-state=open]), which WebKit
 //     re-checks after the page changes (crash in HTMLDocument::isCaseSensitiveAttribute).
 //
-// The app (a WKContentRuleList) or the Safari extension (a declarativeNetRequest rule) stops WebKit
-// from loading style sheets from Claude's own servers, so it never parses the originals. This
-// script loads each of those sheets itself, renames every relative colour and every
-// attribute-testing :has() to something WebKit treats as unsupported, and adds the result to the
-// page right where the <link> is. The link's blocked "error" is kept from the page, which gets
-// "load" instead once the copy is in place.
+// The app's content rule list (StyleFixRules) stops WebKit from loading style sheets from Claude's
+// own servers, so it never parses the originals. This script loads each of those sheets itself,
+// renames every relative colour and every attribute-testing :has() to something WebKit treats as
+// unsupported, and adds the result to the page right where the <link> is. The link's blocked
+// "error" is kept from the page, which gets "load" instead once the copy is in place. Style sheets
+// the page preloads (<link rel="preload" as="style">) are blocked too, and answered the same way.
 //
-// Before this runs, the app or extension sets window.__claudeStyleFixHost:
+// Before this runs, the app sets window.__claudeStyleFixHost (PageScripts.styleFixHost):
 //   fetchText(url) -> Promise<string>   downloads a sheet the page itself isn't allowed to read
 //   report(message)                     receives { fixed, count, hasCount, how } | { failed, error } | { seen }
 
@@ -21,19 +21,30 @@
   if (window.top !== window || window.__claudeWebStyleFix) return;
   window.__claudeWebStyleFix = true;
 
-  // Keep in step with StyleFixRules.hosts in the app and SafariExtension/Resources/rules.json.
+  // Keep in step with StyleFixRules.hosts in the app.
   var OWN_HOST = /(^|\.)(claude\.ai|claude\.com|anthropic\.com)$/i;
   var RELATIVE_COLOR = /\b(rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\(\s*from\s/gi;
-  // What the surroundings provide: the app or the Safari extension (see the top of this file).
+  // What the app provides (see the top of this file).
   var host = window.__claudeStyleFixHost || {};
 
   function report(message) {
     try { if (host.report) host.report(message); } catch (e) {}
   }
 
+  // "stylesheet", "preload" or "prefetch" for a <link> to a style sheet; "" for anything else.
+  function linkKind(node) {
+    if (!node || node.nodeName !== "LINK") return "";
+    var rel = (node.getAttribute("rel") || "").toLowerCase();
+    if (/(^|\s)stylesheet(\s|$)/.test(rel)) return "stylesheet";
+    var isStyle = (node.getAttribute("as") || "").toLowerCase() === "style" ||
+      /\.css([?#]|$)/i.test(node.getAttribute("href") || "");
+    if (isStyle && /(^|\s)preload(\s|$)/.test(rel)) return "preload";
+    if (isStyle && /(^|\s)prefetch(\s|$)/.test(rel)) return "prefetch";
+    return "";
+  }
+
   function isStyleSheetLink(node) {
-    return !!node && node.nodeName === "LINK" &&
-      /(^|\s)stylesheet(\s|$)/i.test(node.getAttribute("rel") || "");
+    return linkKind(node) === "stylesheet";
   }
 
   function ownURL(link) {
@@ -45,13 +56,16 @@
     }
   }
 
-  // The app or extension blocks the original download, so the link fires "error". Keep that from the page;
-  // it gets "load" (or a real "error") once the copy is in place.
+  // The app blocks the original download, so the link fires "error". Keep that from the page; it gets
+  // "load" (or a real "error") once the copy is in place. A preload gets "load" once the file is
+  // ready here, so code that turns it into a style sheet on load carries on. Nothing waits on a prefetch.
   window.addEventListener("error", function (event) {
     var link = event.target;
-    if (!isStyleSheetLink(link) || link.__claudeWebDispatching || !ownURL(link)) return;
+    var kind = linkKind(link);
+    if (!kind || link.__claudeWebDispatching || !ownURL(link)) return;
     event.stopImmediatePropagation();
-    takeOver(link);
+    if (kind === "stylesheet") takeOver(link);
+    else if (kind === "preload") answerPreload(link);
   }, true);
 
   // Keep the page hidden while its first style sheets load, instead of flashing it unstyled.
@@ -71,7 +85,19 @@
     }
   }
 
+  // One download per file, shared by a preload and the style sheet that follows it.
+  var texts = {};
   function getText(href) {
+    if (!texts[href]) {
+      texts[href] = download(href).catch(function (error) {
+        delete texts[href];
+        throw error;
+      });
+    }
+    return texts[href];
+  }
+
+  function download(href) {
     return fetch(href, { credentials: "same-origin", cache: "force-cache" })
       .then(function (response) {
         if (!response.ok) throw new Error("HTTP " + response.status);
@@ -168,6 +194,16 @@
   function dispatch(link, type) {
     link.__claudeWebDispatching = true;
     try { link.dispatchEvent(new Event(type)); } finally { link.__claudeWebDispatching = false; }
+  }
+
+  function answerPreload(link) {
+    if (link.__claudeWebPreload) return;
+    link.__claudeWebPreload = true;
+    getText(ownURL(link).href).then(function () {
+      dispatch(link, "load");
+    }, function () {
+      dispatch(link, "error");
+    });
   }
 
   function takeOver(link) {

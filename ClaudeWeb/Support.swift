@@ -44,14 +44,7 @@ enum AppInfo {
 
 /// Switches in Settings > Blocking. Tracker blocking lives on `BlockList`.
 enum AppSettings {
-    private static let hideAppPromptsKey = "HideAppPrompts"
     private static let styleFixKey = "StyleFixEnabled"
-
-    /// Dismiss claude.ai's "get the Claude app" prompts. On unless turned off.
-    static var hideAppPrompts: Bool {
-        get { UserDefaults.standard.object(forKey: hideAppPromptsKey) as? Bool ?? true }
-        set { UserDefaults.standard.set(newValue, forKey: hideAppPromptsKey) }
-    }
 
     /// The iOS 17.3 style fix. On unless turned off.
     static var styleFixEnabled: Bool {
