@@ -20,7 +20,9 @@ concurrency:
 
 jobs:
   build:
-    runs-on: macos-15
+    # Intel runner: GitHub's Apple-silicon macOS runners were too busy to pick jobs up (cancelled
+    # after 15 minutes in the queue). Xcode builds the same arm64 iOS code on either.
+    runs-on: macos-15-intel
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -62,7 +64,9 @@ jobs:
 
   # The Safari tweak (rootless .deb for Sileo), built with Theos.
   safari-tweak:
-    runs-on: macos-15
+    # Intel runner: GitHub's Apple-silicon macOS runners were too busy to pick jobs up (cancelled
+    # after 15 minutes in the queue). Xcode builds the same arm64 iOS code on either.
+    runs-on: macos-15-intel
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
