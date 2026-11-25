@@ -86,7 +86,7 @@ final class StyleSheetFetcher: NSObject, WKScriptMessageHandlerWithReply {
                     changes.append("replaced \(count) relative colour expression\(count == 1 ? "" : "s")")
                 }
                 if hasCount > 0 {
-                    changes.append("disabled \(hasCount) :has() selector\(hasCount == 1 ? "" : "s") that test an attribute")
+                    changes.append("disabled \(hasCount) :has() selector\(hasCount == 1 ? "" : "s")")
                 }
                 let summary = changes.joined(separator: " and ")
                 let sentence = summary.prefix(1).uppercased() + String(summary.dropFirst())
@@ -110,6 +110,24 @@ final class StyleSheetFetcher: NSObject, WKScriptMessageHandlerWithReply {
                 "Style fix", "Couldn't load \(URL(string: failed)?.lastPathComponent ?? failed)",
                 details: "The page will be missing these styles.\n"
                     + "Reason: \(body["error"] as? String ?? "unknown")\nFile: \(failed.components(separatedBy: "?")[0])"
+            )
+            replyHandler(nil, nil)
+            return
+        }
+
+        if body["runtime"] != nil {
+            let styles = (body["styles"] as? NSNumber)?.intValue ?? 0
+            let rules = (body["rules"] as? NSNumber)?.intValue ?? 0
+            let count = (body["count"] as? NSNumber)?.intValue ?? 0
+            let hasCount = (body["hasCount"] as? NSNumber)?.intValue ?? 0
+            var sources: [String] = []
+            if styles > 0 { sources.append("\(styles) <style> element\(styles == 1 ? "" : "s")") }
+            if rules > 0 { sources.append("\(rules) rule\(rules == 1 ? "" : "s") added by the page's scripts") }
+            DebugLog.shared.info(
+                "Style fix", "Fixed CSS the page added itself",
+                details: "In " + sources.joined(separator: " and ") + ": disabled \(hasCount) :has() selector"
+                    + (hasCount == 1 ? "" : "s") + " and replaced \(count) relative colour expression"
+                    + (count == 1 ? "" : "s") + "."
             )
             replyHandler(nil, nil)
             return

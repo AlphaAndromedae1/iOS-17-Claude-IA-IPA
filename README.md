@@ -40,11 +40,21 @@ relative colours are added unchanged. Style sheets the page preloads (`<link rel
 blocked and answered the same way, so nothing waiting on them gets stuck. Settings → Debug Log lists every file that went through the
 fix, and whether anything was changed.
 
-A second iOS 17.3 crash comes from CSS `:has()` selectors that test an attribute, such as
-`:has([data-state=open])`, which Tailwind generates for its `has-[…]` styles. When the page changes,
-WebKit re-checks those selectors and crashes (in `HTMLDocument::isCaseSensitiveAttribute`). The fix
-disables just those selectors, so WebKit skips them as a browser without `:has()` would. Other
-`:has()` selectors still work. A few small visual touches that depend on them may be missing.
+A second iOS 17.3 crash comes from CSS `:has()` selectors. When the page changes (on the plugins
+page, for example), WebKit re-checks them and sometimes crashes (in
+`HTMLDocument::isCaseSensitiveAttribute`). The first fix disabled only `:has()` selectors that test
+an attribute, but the crash came back. The crash reports suggest WebKit reads a damaged selector,
+which can happen with any `:has()`. So the fix now disables **every** `:has()`, wherever the CSS
+comes from:
+
+- style sheet files from Claude's servers (rewritten before WebKit sees them)
+- `<style>` elements, including ones inside components (shadow roots). One a script adds is
+  rewritten before it goes in. One already in the page has its `:has()` rules swapped for empty ones
+  as soon as it appears, which keeps any rules the page's scripts added.
+- rules added by the page's scripts (`insertRule`, `replace`, `replaceSync`)
+
+WebKit then has no `:has()` selectors to re-check, as in a browser without `:has()` support. Some
+visual touches that rely on `:has()` won't appear, but the page doesn't crash.
 
 (Version 1.3.0 tried to swap the files from a script while WebKit was still downloading them. WebKit
 reads a style sheet as soon as its download finishes, and that happened first, so it still crashed.

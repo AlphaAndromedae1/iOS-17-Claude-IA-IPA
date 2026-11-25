@@ -3,19 +3,27 @@
 // WebKit in iOS 17.3 crashes on two things in claude.ai's CSS:
 //  1. Relative colour syntax, such as rgb(from red r g b) in an @supports test
 //     (crash in RenderThemeIOS::systemColor while parsing the style sheet).
-//  2. :has() selectors that test an attribute, such as :has([data-state=open]), which WebKit
-//     re-checks after the page changes (crash in HTMLDocument::isCaseSensitiveAttribute).
+//  2. :has() selectors, which WebKit re-checks whenever the page changes, and sometimes crashes
+//     doing so (in HTMLDocument::isCaseSensitiveAttribute, reading a selector that looks damaged).
+//     Every :has() is disabled, so there is nothing left to re-check.
 //
 // The app's content rule list (StyleFixRules) stops WebKit from loading style sheets from Claude's
 // own servers, so it never parses the originals. This script loads each of those sheets itself,
-// renames every relative colour and every attribute-testing :has() to something WebKit treats as
-// unsupported, and adds the result to the page right where the <link> is. The link's blocked
+// renames every relative colour and every :has() to something WebKit treats as unsupported (as a
+// browser without them would), and adds the result to the page right where the <link> is. The link's blocked
 // "error" is kept from the page, which gets "load" instead once the copy is in place. Style sheets
 // the page preloads (<link rel="preload" as="style">) are blocked too, and answered the same way.
+//
+// CSS that doesn't come from those files is handled too. A <style> a script adds is rewritten just
+// before it goes in; one already in the page (including inside shadow roots) has its parsed :has()
+// rules swapped for inert ones as soon as it appears, since the :has() crash only happens later,
+// when the page changes. Rules added by the page's scripts (insertRule, replace, replaceSync) are
+// rewritten before WebKit reads them.
 //
 // Before this runs, the app sets window.__claudeStyleFixHost (PageScripts.styleFixHost):
 //   fetchText(url) -> Promise<string>   downloads a sheet the page itself isn't allowed to read
 //   report(message)                     receives { fixed, count, hasCount, how } | { failed, error } | { seen }
+//                                       | { runtime, styles, rules, count, hasCount }
 
 (function () {
   if (window.top !== window || window.__claudeWebStyleFix) return;
@@ -23,7 +31,9 @@
 
   // Keep in step with StyleFixRules.hosts in the app.
   var OWN_HOST = /(^|\.)(claude\.ai|claude\.com|anthropic\.com)$/i;
-  var RELATIVE_COLOR = /\b(rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\(\s*from\s/gi;
+  // Not after a letter, digit or "-", so text that has already been renamed isn't renamed again.
+  var RELATIVE_COLOR = /(^|[^\w-])(rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\(\s*from\s/gi;
+  var HAS = /:has\(/gi;
   // What the app provides (see the top of this file).
   var host = window.__claudeStyleFixHost || {};
 
@@ -115,53 +125,39 @@
     try { return new URL(path, base).href; } catch (e) { return path; }
   }
 
-  // Second iOS 17.3 crash: after the page changes, WebKit re-checks :has() selectors, and crashes
-  // (in HTMLDocument::isCaseSensitiveAttribute) on ones that test an attribute, such as
-  // :has([data-state=open]). Rename just those so WebKit drops them, as a browser without :has()
-  // would; other :has() selectors are left alone.
-  function disableAttributeHas(css) {
-    var lower = css.toLowerCase();
-    var out = "", from = 0, count = 0;
-    for (;;) {
-      var at = lower.indexOf(":has(", from);
-      if (at < 0) break;
-      var depth = 0, quote = "", end = -1;
-      for (var i = at + 4; i < css.length; i++) {
-        var ch = css.charAt(i);
-        if (quote) {
-          if (ch === "\\") i++;
-          else if (ch === quote) quote = "";
-        } else if (ch === "\"" || ch === "'") {
-          quote = ch;
-        } else if (ch === "(") {
-          depth++;
-        } else if (ch === ")" && --depth === 0) {
-          end = i;
-          break;
-        }
-      }
-      if (end < 0) break;  // unbalanced: leave the rest as it is
-      var testsAttribute = css.slice(at + 5, end).indexOf("[") >= 0;
-      out += css.slice(from, at) + (testsAttribute ? ":-claude-web-unsupported-has(" : css.slice(at, at + 5));
-      if (testsAttribute) count++;
-      from = at + 5;
-    }
-    disableAttributeHas.count = count;
-    return out + css.slice(from);
+  // Renames relative colours and :has() to names WebKit doesn't know, so it skips them instead of
+  // crashing. Safe to run on text that has already been through it.
+  function rewrite(css) {
+    var count = 0, hasCount = 0;
+    css = css.replace(RELATIVE_COLOR, function (match, before, name) {
+      count++;
+      return before + "-claude-web-unsupported-" + name + "(from ";
+    });
+    css = css.replace(HAS, function () {
+      hasCount++;
+      return ":-claude-web-unsupported-has(";
+    });
+    return { css: css, count: count, hasCount: hasCount };
+  }
+
+  function needsRewrite(css) {
+    RELATIVE_COLOR.lastIndex = 0;
+    HAS.lastIndex = 0;
+    var needed = RELATIVE_COLOR.test(css) || HAS.test(css);
+    RELATIVE_COLOR.lastIndex = 0;
+    HAS.lastIndex = 0;
+    return needed;
   }
 
   function fix(css, base) {
-    css = css.replace(RELATIVE_COLOR, function (match, name) {
-      return "-claude-web-unsupported-" + name + "(from ";
-    });
-    css = disableAttributeHas(css);
+    var result = rewrite(css);
     // Paths inside the file were relative to it; it now lives in the page, so make them absolute.
-    css = css.replace(/url\(\s*(['"]?)([^'")\s]+)\1\s*\)/gi, function (match, quote, path) {
+    result.css = result.css.replace(/url\(\s*(['"]?)([^'")\s]+)\1\s*\)/gi, function (match, quote, path) {
       return "url(" + quote + absolute(path, base) + quote + ")";
-    });
-    return css.replace(/@import\s+(['"])([^'"]+)\1/gi, function (match, quote, path) {
+    }).replace(/@import\s+(['"])([^'"]+)\1/gi, function (match, quote, path) {
       return "@import " + quote + absolute(path, base) + quote;
     });
+    return result;
   }
 
   function pageNonce() {
@@ -220,9 +216,9 @@
     if (held) hide();
     getText(url.href).then(function (css) {
       if (typeof css !== "string") throw new Error("No text came back");
-      var count = (css.match(RELATIVE_COLOR) || []).length;
-      var how = insert(link, fix(css, url.href));
-      report({ fixed: url.href, count: count, hasCount: disableAttributeHas.count || 0, how: how });
+      var result = fix(css, url.href);
+      var how = insert(link, result.css);
+      report({ fixed: url.href, count: result.count, hasCount: result.hasCount, how: how });
       dispatch(link, "load");
     }).catch(function (error) {
       report({ failed: url.href, error: String((error && error.message) || error) });
@@ -232,26 +228,154 @@
     });
   }
 
+  // CSS that the page puts in <style> elements or adds from its scripts. Counted and reported
+  // every couple of seconds rather than one message per rule.
+  var runtime = null;
+  function noteRuntime(kind, result) {
+    if (!runtime) {
+      runtime = { runtime: true, styles: 0, rules: 0, count: 0, hasCount: 0 };
+      setTimeout(function () {
+        var message = runtime;
+        runtime = null;
+        report(message);
+      }, 2000);
+    }
+    runtime[kind] += 1;
+    runtime.count += result.count;
+    runtime.hasCount += result.hasCount;
+  }
+
+  // A <style> already in the page: WebKit has parsed it, so swap each :has() rule in the parsed
+  // sheet for an inert one. Editing the parsed rules (rather than the text) keeps rules the page's
+  // scripts added with insertRule, and their numbering.
+  function fixStyleElement(style) {
+    if (style.hasAttribute("data-claude-web-fixed")) return;  // one of ours, already fixed
+    var sheet = style.sheet;
+    if (!sheet) return;
+    var result = { count: 0, hasCount: 0 };
+    disableHasRules(sheet, result);
+    if (result.hasCount) noteRuntime("styles", result);
+  }
+
+  function disableHasRules(group, result) {
+    var rules;
+    try { rules = group.cssRules; } catch (e) { return; }
+    if (!rules) return;
+    for (var i = 0; i < rules.length; i++) {
+      var rule = rules[i];
+      HAS.lastIndex = 0;
+      if (typeof rule.selectorText === "string" && HAS.test(rule.selectorText)) {
+        try {
+          group.deleteRule(i);
+          group.insertRule("@media not all {}", i);
+          result.hasCount++;
+        } catch (e) {}
+      } else if (rule.cssRules) {
+        disableHasRules(rule, result);  // inside @media, @supports, @layer or a nested rule
+      }
+    }
+    HAS.lastIndex = 0;
+  }
+
+  // A <style> a script is about to add: rewrite its text first, so WebKit never parses the original.
+  function prepareStyle(node) {
+    if (!node || node.nodeName !== "STYLE" || node.isConnected) return;
+    var css = node.textContent || "";
+    if (!css || !needsRewrite(css)) return;
+    var result = rewrite(css);
+    node.textContent = result.css;
+    noteRuntime("styles", result);
+  }
+
+  function wrapInsertion(name) {
+    var original = window.Node && Node.prototype[name];
+    if (typeof original !== "function") return;
+    Node.prototype[name] = function (node) {
+      prepareStyle(node);
+      return original.apply(this, arguments);
+    };
+  }
+  wrapInsertion("appendChild");
+  wrapInsertion("insertBefore");
+
+  // insertRule throws if the rule doesn't parse, which a renamed :has() makes happen. Put an inert
+  // rule in its place instead, so the page's code carries on and its rule numbering stays right.
+  function wrapInsertRule(prototype) {
+    if (!prototype || typeof prototype.insertRule !== "function") return;
+    var original = prototype.insertRule;
+    prototype.insertRule = function (rule) {
+      if (typeof rule !== "string" || !needsRewrite(rule)) return original.apply(this, arguments);
+      var result = rewrite(rule);
+      noteRuntime("rules", result);
+      var args = Array.prototype.slice.call(arguments);
+      args[0] = result.css;
+      try {
+        return original.apply(this, args);
+      } catch (error) {
+        args[0] = "@media not all {}";
+        return original.apply(this, args);
+      }
+    };
+  }
+
+  // Whole style sheets given to replace()/replaceSync(): rules that no longer parse are just skipped.
+  function wrapReplace(prototype, name) {
+    if (!prototype || typeof prototype[name] !== "function") return;
+    var original = prototype[name];
+    prototype[name] = function (text) {
+      if (typeof text !== "string" || !needsRewrite(text)) return original.apply(this, arguments);
+      var result = rewrite(text);
+      noteRuntime("rules", result);
+      var args = Array.prototype.slice.call(arguments);
+      args[0] = result.css;
+      return original.apply(this, args);
+    };
+  }
+
+  var sheetPrototype = window.CSSStyleSheet && CSSStyleSheet.prototype;
+  wrapInsertRule(sheetPrototype);
+  wrapInsertRule(window.CSSGroupingRule && CSSGroupingRule.prototype);
+  wrapReplace(sheetPrototype, "replace");
+  wrapReplace(sheetPrototype, "replaceSync");
+
   function scan(node) {
     if (node.nodeType !== 1) return;
     if (node.nodeName === "LINK") {
       takeOver(node);
+    } else if (node.nodeName === "STYLE") {
+      fixStyleElement(node);
     } else if (node.getElementsByTagName) {
       var links = node.getElementsByTagName("link");
       for (var i = 0; i < links.length; i++) takeOver(links[i]);
+      var styles = node.getElementsByTagName("style");
+      for (var j = 0; j < styles.length; j++) fixStyleElement(styles[j]);
     }
   }
 
-  new MutationObserver(function (records) {
+  var observing = { childList: true, subtree: true, attributes: true, attributeFilter: ["rel", "href"] };
+  var observer = new MutationObserver(function (records) {
     for (var i = 0; i < records.length; i++) {
       var record = records[i];
       if (record.type === "attributes") {
         scan(record.target);
+      } else if (record.target.nodeName === "STYLE") {
+        fixStyleElement(record.target);  // text added to or replaced in a <style>
       } else {
         for (var j = 0; j < record.addedNodes.length; j++) scan(record.addedNodes[j]);
       }
     }
-  }).observe(document, { childList: true, subtree: true, attributes: true, attributeFilter: ["rel", "href"] });
+  });
+  observer.observe(document, observing);
+
+  // Shadow roots (web components) have their own <style> and <link> elements.
+  var attachShadow = window.Element && Element.prototype.attachShadow;
+  if (attachShadow) {
+    Element.prototype.attachShadow = function () {
+      var root = attachShadow.apply(this, arguments);
+      try { observer.observe(root, observing); } catch (e) {}
+      return root;
+    };
+  }
 
   if (document.documentElement) scan(document.documentElement);
 })();
