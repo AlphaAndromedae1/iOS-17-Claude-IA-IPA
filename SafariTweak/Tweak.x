@@ -153,7 +153,7 @@ static NSString *RuleListJSON(void) {
 
 static void AddMessageHandler(WKUserContentController *controller) {
     @try {
-        [controller addScriptMessageHandler:styleSheetFetcher contentWorld:WKContentWorld.pageWorld name:kMessageHandlerName];
+        [controller addScriptMessageHandlerWithReply:styleSheetFetcher contentWorld:WKContentWorld.pageWorld name:kMessageHandlerName];
     } @catch (NSException *exception) {
         // Already there: WebKit throws rather than adding a second handler with the same name.
     }
