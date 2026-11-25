@@ -59,3 +59,49 @@ jobs:
               --title "Claude Web $TAG" \
               --generate-notes
           fi
+
+  # The Safari tweak (rootless .deb for Sileo), built with Theos.
+  safari-tweak:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Theos
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+          HOMEBREW_NO_INSTALL_CLEANUP: "1"
+        run: |
+          brew install ldid make dpkg xz
+          git clone --quiet --recursive --depth 1 https://github.com/theos/theos.git "$HOME/theos"
+          echo "THEOS=$HOME/theos" >> "$GITHUB_ENV"
+
+      - name: Build the Safari tweak
+        working-directory: SafariTweak
+        run: |
+          gmake package FINALPACKAGE=1
+          ls -la packages
+          DEB=$(ls packages/*.deb | head -1)
+          echo ">> Package contents"
+          dpkg-deb --info "$DEB" | sed -n '/Package:/,$p'
+          dpkg-deb --contents "$DEB"
+
+      - name: Upload the tweak
+        uses: actions/upload-artifact@v4
+        with:
+          name: ClaudeWebSafariFix-deb
+          path: SafariTweak/packages/*.deb
+          if-no-files-found: error
+
+      - name: Attach the tweak to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          # The build job creates the release; wait for it, then add the .deb.
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 && break
+            sleep 30
+          done
+          gh release upload "$TAG" SafariTweak/packages/*.deb --repo "$GITHUB_REPOSITORY" --clobber

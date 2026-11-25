@@ -11,3 +11,8 @@ DerivedData/
 *.ipa
 *.dSYM
 *.dSYM.zip
+
+# Safari tweak build output (Theos)
+SafariTweak/.theos/
+SafariTweak/packages/
+SafariTweak/StyleFixJS.h

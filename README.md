@@ -76,6 +76,25 @@ Blocking the download avoids that race.)
 - **Shake the phone** to open the menu: Reload, New Chat, Open Copied Link, Open in Safari, and
   **Settings & Debug Log**.
 
+## Fixing Safari too (jailbroken phones)
+
+Safari on iOS 17.3 crashes on claude.ai for the same WebKit bugs. On a jailbroken phone (rootless,
+such as Dopamine), the **Claude iOS 17 Fix for Safari** tweak applies the same fix to Safari, and to
+Safari views inside other apps:
+
+1. Get `io.github.alphaandromedae1.claudewebsafarifix_…_iphoneos-arm64.deb` from the **Releases**
+   page, or from the latest *Build IPA* run → *Artifacts* → `ClaudeWebSafariFix-deb`.
+2. Install it: open the `.deb` in **Sileo** or **Filza** and tap Install, or run
+   `sudo dpkg -i <file>.deb` in a terminal.
+3. Swipe Safari away in the app switcher and reopen it.
+
+The tweak adds the app's two pieces to every web view Safari makes. A blocking rule stops WebKit
+loading style sheets from Claude's servers on Claude's sites. `Shared/style-fix.js`, compiled into
+the tweak, then loads, corrects and inserts them. Other sites are untouched: the rule only applies
+on claude.ai, claude.com and anthropic.com, and the script exits straight away anywhere else. To
+undo it, remove the tweak in Sileo. The tweak's source is in `SafariTweak/`, and GitHub Actions
+builds it with [Theos](https://theos.dev).
+
 ## Settings & Debug Log
 
 Shake the phone and choose **Settings & Debug Log**, or tap the button on the error screen.
@@ -231,6 +250,7 @@ The IPA is written to `build/ClaudeWeb.ipa`. To work in Xcode instead, run `xcod
 | `ClaudeWeb/DebugLog.swift`, `DebugLogViewController.swift` | The debug log and its screens |
 | `ClaudeWeb/StyleSheetFetcher.swift` | Native half of the iOS 17.3 style fix |
 | `Shared/style-fix.js` | The iOS 17.3 style fix itself, loaded into the page by the app |
+| `SafariTweak/` | The jailbreak tweak that applies the same fix to Safari (Theos) |
 | `ClaudeWeb/Support.swift` | Colours, Safari user agent, JavaScript alert/confirm/prompt dialogs |
 | `Supporting/Info.plist` | App name, permissions text, orientations |
 | `scripts/make-icon.py` | Regenerates the app icon |

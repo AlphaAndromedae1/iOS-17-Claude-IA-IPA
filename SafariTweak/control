@@ -1,0 +1,9 @@
+Package: io.github.alphaandromedae1.claudewebsafarifix
+Name: Claude iOS 17 Fix for Safari
+Version: 1.0.0
+Architecture: iphoneos-arm64
+Description: Stops claude.ai crashing Safari on iOS 17.3 by correcting the CSS that WebKit can't handle. The same fix as the Claude Web app, for Safari and Safari views in other apps.
+Maintainer: Claude Web
+Author: Claude Web
+Section: Tweaks
+Depends: mobilesubstrate (>= 0.9.5000), firmware (>= 16.4)
