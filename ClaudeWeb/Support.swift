@@ -42,9 +42,16 @@ enum AppInfo {
 
 // MARK: - Settings
 
-/// Switches in Settings > Blocking. Tracker blocking lives on `BlockList`.
+/// Switches in Settings. Tracker blocking lives on `BlockList`.
 enum AppSettings {
     private static let styleFixKey = "StyleFixEnabled"
+    private static let autoClearCacheKey = "AutoClearCache"
+
+    /// Clear the cache when it gets big or old (see `CacheJanitor`). On unless turned off.
+    static var autoClearCache: Bool {
+        get { UserDefaults.standard.object(forKey: autoClearCacheKey) as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: autoClearCacheKey) }
+    }
 
     /// The iOS 17.3 style fix. On unless turned off.
     static var styleFixEnabled: Bool {

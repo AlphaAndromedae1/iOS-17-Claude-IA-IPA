@@ -64,9 +64,28 @@ final class SettingsViewController: UITableViewController {
             rows: [.debugLog, .copyDiagnostics, .loadTestPage, .reloadWithoutAddOns]
         ),
         Section(
-            title: "Website Data",
-            footer: "Clear Cache keeps you signed in. Sign Out and Reset deletes everything claude.ai stored in this app.",
-            rows: [.clearCache, .signOutAndReset]
+            title: "Storage",
+            footer: "The cache is cleared automatically when the app's data passes "
+                + CacheJanitor.format(CacheJanitor.sizeLimit) + " or hasn't been cleared for a week, when the app "
+                + "opens or you come back to it. Clear Cache does the same now. Both keep you signed in. "
+                + "Sign Out and Reset deletes everything claude.ai stored in this app.",
+            rows: [
+                .info(title: "App Data", value: { CacheJanitor.lastMeasuredSize.map(CacheJanitor.format) ?? "Measuring…" }),
+                .info(title: "Last Cleared", value: {
+                    CacheJanitor.lastCleaned.map {
+                        DateFormatter.localizedString(from: $0, dateStyle: .medium, timeStyle: .short)
+                    } ?? "Never"
+                }),
+                .toggle(title: "Clear Cache Automatically", toggle: Toggle(
+                    isOn: { AppSettings.autoClearCache },
+                    set: { on in
+                        AppSettings.autoClearCache = on
+                        DebugLog.shared.info("Settings", "Automatic cache clean-up turned \(on ? "on" : "off")")
+                    }
+                )),
+                .clearCache,
+                .signOutAndReset,
+            ]
         ),
     ]
 
@@ -93,6 +112,9 @@ final class SettingsViewController: UITableViewController {
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         tableView.reloadData()
+        CacheJanitor.measure { [weak self] _ in
+            self?.tableView.reloadData()
+        }
     }
 
     @objc private func close() {

@@ -72,6 +72,7 @@ Blocking the download avoids that race.)
 - File, photo and camera uploads; microphone for dictation and voice mode.
 - Downloads (artifacts, exported files) open the share sheet, so you can use Save to Files and similar.
 - Swipe from the edge to go back and forward.
+- Clears its cache automatically when it gets big or a week old, without signing you out.
 - Blocks known tracking, analytics and advertising services, and includes a Privacy Report (see below).
 - **Shake the phone** to open the menu: Reload, New Chat, Open Copied Link, Open in Safari, and
   **Settings & Debug Log**.
@@ -116,7 +117,14 @@ Shake the phone and choose **Settings & Debug Log**, or tap the button on the er
   conversations is recorded.
 - **Copy Diagnostics:** a short summary, plus the latest problems from the log, to paste into a chat.
 - **Load a Test Page** / **Reload Without Add-ons:** see Troubleshooting below.
-- **Clear Cache** (keeps you signed in) and **Sign Out and Reset**.
+- **Storage:** how much space the app's data takes, and when the cache was last cleared. With
+  *Clear Cache Automatically* on (the default), the cache is cleared when the app's data passes
+  150 MB or hasn't been cleared for a week. That's checked when the app opens (before claude.ai
+  loads) and when you come back to it. It clears WebKit's file cache, the page's offline databases
+  and service worker caches, the app's own download cache and old temporary files. Cookies and
+  local storage stay, so you stay signed in. *Clear Cache* does the same on demand, and each
+  clean-up is noted in the Debug Log with the sizes before and after. *Sign Out and Reset* deletes
+  everything.
 
 The iOS Settings app can only show fixed preferences, not a live log, so these settings live inside
 the app.

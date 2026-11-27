@@ -111,8 +111,11 @@ final class WebViewController: UIViewController {
         // Install the content rules first, so the very first page load already has the iOS 17
         // style fix and tracker blocking.
         let firstPage = restoredPage() ?? Self.homeURL
-        installContentRules { [weak self] in
-            self?.load(firstPage)
+        // A cache clean-up, if one is due, runs before the page loads, so nothing it's using goes.
+        CacheJanitor.cleanIfNeeded { [weak self] _ in
+            self?.installContentRules { [weak self] in
+                self?.load(firstPage)
+            }
         }
     }
 
@@ -295,6 +298,9 @@ final class WebViewController: UIViewController {
         if reloadWhenActive {
             reloadWhenActive = false
             load(webView.url ?? Self.homeURL)
+        }
+        CacheJanitor.cleanIfNeeded(throttled: true) { [weak self] cleared in
+            if cleared { self?.reloadPage() }
         }
     }
 
@@ -486,6 +492,9 @@ final class WebViewController: UIViewController {
                 + (styleSheetFetcher.fixedSheets.isEmpty ? "none" : styleSheetFetcher.fixedSheets.joined(separator: ", ")),
             "Tracker blocking: \(blockList.isEnabled ? "on" : "off"), \(blockList.hosts.count) addresses",
             "Current page: " + (webView.url?.host ?? webView.url?.scheme ?? "none"),
+            "App data: " + (CacheJanitor.lastMeasuredSize.map(CacheJanitor.format) ?? "not measured yet")
+                + ", last cleared " + (CacheJanitor.lastCleaned.map { DebugLog.timestamp.string(from: $0) } ?? "never")
+                + (AppSettings.autoClearCache ? " (automatic clean-up on)" : " (automatic clean-up off)"),
             "Pages finished loading this session: \(pagesFinished)",
             "Times the page stopped this session: \(stopLog.count)",
         ]
@@ -534,14 +543,7 @@ final class WebViewController: UIViewController {
 
     /// Fixes a page that is stuck on an old or broken copy of the site; keeps you signed in.
     private func clearCache() {
-        let types: Set<String> = [
-            WKWebsiteDataTypeDiskCache,
-            WKWebsiteDataTypeMemoryCache,
-            WKWebsiteDataTypeFetchCache,
-            WKWebsiteDataTypeServiceWorkerRegistrations,
-        ]
-        DebugLog.shared.info("App", "Cleared the cache")
-        WKWebsiteDataStore.default().removeData(ofTypes: types, modifiedSince: .distantPast) { [weak self] in
+        CacheJanitor.clean(reason: "You tapped Clear Cache") { [weak self] in
             self?.reloadPage()
         }
     }
